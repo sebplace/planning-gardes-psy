@@ -20,4 +20,5 @@ EXPOSE 8000
 
 # Migrations puis démarrage. Le jeu de démonstration se charge séparément :
 #   docker compose exec app python scripts/seed_demo.py
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Respecte $PORT (Scalingo/PaaS) avec repli sur 8000 pour docker-compose local.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

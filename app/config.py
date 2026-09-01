@@ -3,8 +3,10 @@ d'environnement (préfixe ``GARDES_``)."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -34,6 +36,33 @@ class Settings(BaseSettings):
     default_grace_period_hours: int = 48  # Q-08
     default_holiday_pair_requirement: str = "VERT_ORANGE"  # Q-05
     default_reminder_offsets_days: str = "30,14,7,2"  # §9.1
+
+    @model_validator(mode="after")
+    def _resolve_database_url(self) -> "Settings":
+        """Rend l'URL de base compatible avec un hébergeur PaaS (ex. Scalingo).
+
+        1. En production, la base managée est exposée via une variable HORS préfixe
+           GARDES_ (SCALINGO_POSTGRESQL_URL, sinon DATABASE_URL). On la reprend
+           seulement si aucune URL explicite GARDES_DATABASE_URL n'a été fournie
+           (c.-à-d. si l'on est resté sur le SQLite par défaut).
+        2. SQLAlchemy 2.0 avec le pilote psycopg v3 exige le schéma
+           ``postgresql+psycopg://`` : on normalise ``postgres://`` et
+           ``postgresql://``.
+        3. Les bases managées imposent TLS : on ajoute ``sslmode=require`` au besoin.
+        """
+        if self.database_url.startswith("sqlite"):
+            external = os.environ.get("SCALINGO_POSTGRESQL_URL") or os.environ.get("DATABASE_URL")
+            if external:
+                self.database_url = external
+        url = self.database_url
+        if url.startswith("postgres://"):
+            url = "postgresql+psycopg://" + url[len("postgres://"):]
+        elif url.startswith("postgresql://"):
+            url = "postgresql+psycopg://" + url[len("postgresql://"):]
+        if url.startswith("postgresql+psycopg://") and "sslmode=" not in url:
+            url += ("&" if "?" in url else "?") + "sslmode=require"
+        self.database_url = url
+        return self
 
 
 settings = Settings()
