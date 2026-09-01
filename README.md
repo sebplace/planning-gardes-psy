@@ -11,6 +11,55 @@
 
 ---
 
+## Pour essayer le prototype sans rien connaître à l'informatique
+
+Trois étapes, sur un ordinateur Windows. Aucun compte n'est nécessaire, ni ici ni ailleurs.
+
+**1. Installer Python** (une seule fois, gratuit, deux minutes)
+
+Ouvrez <https://www.python.org/downloads/> et cliquez sur le gros bouton
+« Download Python ». Lancez le fichier téléchargé.
+Sur la première fenêtre, **cochez la case « Add python.exe to PATH » en bas**,
+puis cliquez sur « Install Now ».
+
+**2. Télécharger le prototype**
+
+En haut de cette page, cliquez sur le bouton vert **« Code »**, puis sur
+**« Download ZIP »**. Enregistrez le fichier, puis faites un clic droit dessus
+et choisissez « Extraire tout ». Placez le dossier obtenu sur votre Bureau.
+
+**3. Double-cliquer sur `DEMARRER.bat`**
+
+Ouvrez le dossier et double-cliquez sur le fichier **`DEMARRER.bat`**.
+Une fenêtre noire s'ouvre et fait tout le reste : elle prépare le prototype,
+puis ouvre automatiquement votre navigateur sur l'application.
+
+> La première fois, comptez deux à trois minutes : le prototype télécharge ce
+> dont il a besoin. Les fois suivantes, le démarrage est immédiat.
+
+Connectez-vous ensuite avec :
+
+- adresse : **`admin@demo.invalid`**
+- mot de passe : **`demo`**
+
+Pour arrêter le prototype, fermez simplement la fenêtre noire.
+Pour le relancer plus tard, double-cliquez de nouveau sur `DEMARRER.bat`.
+
+### Si quelque chose ne fonctionne pas
+
+| Ce que vous voyez | Ce qu'il faut faire |
+|---|---|
+| « Python n'est pas installé sur cet ordinateur » | Reprenez l'étape 1, en vérifiant bien la case **« Add python.exe to PATH »**. |
+| « L'installation des composants a échoué » | Le prototype n'arrive pas à télécharger ce dont il a besoin : vérifiez votre connexion Internet. Sur un poste professionnel, un pare-feu peut bloquer : essayez depuis un ordinateur personnel. |
+| Windows affiche un avertissement de sécurité | C'est normal pour un fichier téléchargé depuis Internet. Choisissez « Informations complémentaires », puis « Exécuter quand même ». |
+| La fenêtre noire se ferme aussitôt | Faites plutôt un clic droit sur `DEMARRER.bat` → « Exécuter en tant qu'administrateur », ou déplacez le dossier sur votre Bureau. |
+| Le navigateur affiche une page d'erreur | Attendez dix secondes et rafraîchissez : le prototype n'avait pas encore fini de démarrer. |
+
+Rien de ce qui est affiché n'est réel : toutes les personnes, dates et gardes
+sont inventées, et aucun message n'est envoyé à qui que ce soit.
+
+---
+
 ## Les trois lectures possibles de ce dépôt
 
 | Lecture | Ce que c'est | Ce que ce n'est pas |
@@ -21,7 +70,10 @@
 
 ---
 
-## Démarrage en trois commandes
+## Démarrage en trois commandes (profil technique)
+
+> Pour un essai sans ligne de commande, voir la section
+> « Pour essayer le prototype sans rien connaître à l'informatique » ci-dessus.
 
 ```bash
 python -m venv .venv
