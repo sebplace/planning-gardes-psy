@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block titre %}Détail d'un scénario{% endblock %}
+{% block contenu %}
+<h1>{{ scenario.name }}</h1>
+
+<p class="message alerte" role="status">
+  <strong>Simulation — non applicable au planning réel.</strong>
+  Toute formule de répartition utilisée ici est une hypothèse de démonstration.
+</p>
+
+<div class="carte">
+  <h2>Hypothèses versionnées</h2>
+  <pre>{{ hypotheses | tojson(indent=2) }}</pre>
+</div>
+
+{% if structural %}
+<div class="carte">
+  <h2>Projection structurelle</h2>
+  <p>
+    Verdict : <span class="etiquette {{ 'vert' if result.verdict.startswith('théoriquement') else 'rouge' }}">{{ result.verdict }}</span>
+  </p>
+  <p>
+    Postes requis <strong>{{ structural.posts_required }}</strong> ·
+    répartis <strong>{{ structural.posts_assigned }}</strong> ·
+    non couverts <strong>{{ structural.posts_uncovered }}</strong> ·
+    égalité arithmétique vérifiée : <strong>{{ structural.identite_arithmetique }}</strong>
+  </p>
+  <p>
+    Capacité assistante {{ structural.assistant_capacity }} ·
+    utilisée {{ structural.assistant_used }} ·
+    surplus {{ structural.assistant_surplus }}<br>
+    Première ligne résiduelle des seniors <strong>{{ structural.senior_l1 }}</strong> ·
+    deuxième ligne <strong>{{ structural.senior_l2 }}</strong> ·
+    total <strong>{{ structural.senior_total }}</strong><br>
+    Charge par senior : moyenne {{ structural.mean_per_senior }},
+    minimum {{ structural.min_per_senior }}, maximum {{ structural.max_per_senior }},
+    dispersion {{ structural.dispersion }}
+  </p>
+
+  {% if structural.reasons %}
+  <h3>Raisons</h3>
+  <ul>{% for r in structural.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% for w in structural.warnings %}<p class="hypothese">{{ w }}</p>{% endfor %}
+
+  <h3>Détail par catégorie</h3>
+  <div class="tableau-defilant">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Catégorie</th><th scope="col">Occurrences</th>
+          <th scope="col">Mode B visé</th><th scope="col">Mode B effectif</th>
+          <th scope="col">Mode A</th><th scope="col">L1 assistant</th>
+          <th scope="col">L1 senior</th><th scope="col">L2 senior</th>
+          <th scope="col">Non couverts</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in structural.per_category %}
+        <tr>
+          <td>{{ c.label }}</td><td>{{ c.occurrences }}</td>
+          <td>{{ c.mode_b_target }}</td><td>{{ c.mode_b_effective }}</td>
+          <td>{{ c.mode_a }}</td><td>{{ c.posts_l1_assistant }}</td>
+          <td>{{ c.posts_l1_senior }}</td><td>{{ c.posts_l2_senior }}</td>
+          <td>{{ c.posts_uncovered }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if sensitivity %}
+<div class="carte">
+  <h2>Matrice de sensibilité — nombre d'assistants × quota par assistant</h2>
+  <div class="tableau-defilant">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Assistants</th><th scope="col">Gardes par assistant</th>
+          <th scope="col">L1 senior résiduelle</th><th scope="col">L2 senior</th>
+          <th scope="col">Total senior</th><th scope="col">Non couverts</th>
+          <th scope="col">Verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for cell in sensitivity %}
+        <tr>
+          <td>{{ cell.assistants }}</td><td>{{ cell.guards_per_assistant }}</td>
+          <td>{{ cell.senior_l1_residual }}</td><td>{{ cell.senior_l2_volume }}</td>
+          <td>{{ cell.senior_total }}</td><td>{{ cell.posts_uncovered }}</td>
+          <td>{{ cell.verdict }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if feasibility and feasibility.execute %}
+<div class="carte">
+  <h2>Simulation de faisabilité</h2>
+  <p class="aide">
+    Exécutée par le <strong>même moteur de contraintes</strong> que le planning réel,
+    sur des profils fictifs et des disponibilités simulées.
+  </p>
+  <p>
+    Réalisable : <strong>{{ feasibility.realisable }}</strong> ·
+    postes {{ feasibility.postes }} ·
+    non pourvus {{ feasibility.postes_non_pourvus }} ·
+    oranges utilisés {{ feasibility.oranges_utilises }} ·
+    graine {{ feasibility.graine }} ·
+    moteur {{ feasibility.moteur }}
+  </p>
+  {% if feasibility.detail_non_pourvus %}
+  <ul>{% for d in feasibility.detail_non_pourvus %}<li>{{ d }}</li>{% endfor %}</ul>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,34 @@
+# Prototype de démonstration — données entièrement fictives.
+# Ne pas utiliser tel quel en production : voir la section « Avant une production »
+# du README.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gardes
+      POSTGRES_PASSWORD: gardes
+      POSTGRES_DB: gardes
+      TZ: Europe/Brussels
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gardes"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - donnees_postgres:/var/lib/postgresql/data
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GARDES_DATABASE_URL: postgresql+psycopg://gardes:gardes@db:5432/gardes
+      GARDES_SECRET_KEY: prototype-demo-non-secret-a-remplacer-en-production
+      GARDES_TIMEZONE: Europe/Brussels
+    ports:
+      - "8000:8000"
+
+volumes:
+  donnees_postgres:

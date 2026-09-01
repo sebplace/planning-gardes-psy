@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block titre %}Suivi administratif{% endblock %}
+{% block contenu %}
+<h1>Suivi administratif</h1>
+
+<div class="carte">
+  <h2>Campagnes de désidératas</h2>
+  <div class="tableau-defilant">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Trimestre</th><th scope="col">État</th><th scope="col">Échéance</th>
+          <th scope="col">Validées</th><th scope="col">Non finalisées</th>
+          <th scope="col">Conversion par défaut</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for campaign in campaigns %}
+        {% set pending = campaign.submissions | rejectattr('is_finalised') | list %}
+        <tr>
+          <td>{{ campaign.quarter.label }}</td>
+          <td><span class="etiquette neutre">{{ campaign.state.value }}</span></td>
+          <td>{{ format_local(campaign.deadline_at) }}</td>
+          <td>{{ campaign.submissions|length - pending|length }}</td>
+          <td>
+            {% if pending %}
+              <span class="etiquette rouge">{{ pending|length }} — {{ pending|map(attribute='profile.code')|join(', ') }}</span>
+            {% else %}<span class="etiquette vert">aucune</span>{% endif %}
+          </td>
+          <td>
+            {% if campaign.default_conversion_done_at %}
+              appliquée le {{ format_local(campaign.default_conversion_done_at) }}
+            {% else %}non appliquée{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="carte">
+  <h2>Génération</h2>
+  {% for quarter in quarters %}
+    {% if blockers[quarter.id] %}
+      <div class="message alerte" role="alert">
+        <strong>{{ quarter.label }} — génération bloquée :</strong>
+        <ul>{% for b in blockers[quarter.id] %}<li>{{ b }}</li>{% endfor %}</ul>
+      </div>
+    {% else %}
+      <form method="post" action="/admin/generer" class="carte">
+        <h3>{{ quarter.label }}</h3>
+        <input type="hidden" name="quarter_id" value="{{ quarter.id }}">
+        <p>
+          <label for="graine-{{ quarter.id }}">Graine (reproductibilité)</label>
+          <input type="number" id="graine-{{ quarter.id }}" name="graine" value="20260901">
+        </p>
+        <p>
+          <label for="variantes-{{ quarter.id }}">Nombre de variantes</label>
+          <input type="number" id="variantes-{{ quarter.id }}" name="variantes"
+                 value="3" min="1" max="3">
+        </p>
+        <button type="submit">Lancer le moteur</button>
+        <p class="aide">À graine, données et paramètres identiques, le résultat est reproductible.</p>
+      </form>
+    {% endif %}
+  {% endfor %}
+</div>
+
+<div class="carte">
+  <h2>Exécutions du moteur</h2>
+  {% if runs %}
+  <div class="tableau-defilant">
+    <table>
+      <thead>
+        <tr><th scope="col">#</th><th scope="col">Trimestre</th><th scope="col">Statut</th>
+            <th scope="col">Graine</th><th scope="col">Empreinte des entrées</th>
+            <th scope="col">Variantes</th><th scope="col"></th></tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr>
+          <td>{{ run.id }}</td>
+          <td>{{ run.quarter_id }}</td>
+          <td>{{ run.status.value }}{% if run.blocked_reason %} <span class="aide">{{ run.blocked_reason }}</span>{% endif %}</td>
+          <td>{{ run.seed }}</td>
+          <td><code>{{ run.input_snapshot_hash[:16] }}…</code></td>
+          <td>{{ run.proposals|length }}</td>
+          <td><a href="/admin/execution/{{ run.id }}">Comparer</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="vide">Aucune exécution enregistrée.</p>{% endif %}
+</div>
+
+<div class="carte">
+  <h2>Versions de planning</h2>
+  {% if versions %}
+  <ul>
+    {% for v in versions %}
+    <li>
+      <a href="/admin/version/{{ v.id }}">Version {{ v.version_no }}</a> —
+      <span class="etiquette neutre">{{ v.state.value }}</span>
+      {% if v.published_at %} — publiée le {{ format_local(v.published_at) }}{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="vide">Aucune version.</p>{% endif %}
+</div>
+{% endblock %}

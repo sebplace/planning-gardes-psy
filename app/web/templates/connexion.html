@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block titre %}Connexion{% endblock %}
+{% block contenu %}
+<h1>Connexion</h1>
+
+<div class="carte">
+  <form method="post" action="/connexion">
+    <p>
+      <label for="email">Adresse électronique</label>
+      <input type="email" id="email" name="email" required autocomplete="username" size="34">
+    </p>
+    <p>
+      <label for="mot_de_passe">Mot de passe</label>
+      <input type="password" id="mot_de_passe" name="mot_de_passe" required
+             autocomplete="current-password" size="34">
+    </p>
+    <button type="submit">Se connecter</button>
+  </form>
+</div>
+
+<div class="carte">
+  <h2>Comptes de démonstration</h2>
+  <p class="aide">
+    Tous les comptes sont fictifs (domaine réservé <code>.invalid</code>) et utilisent
+    le mot de passe <strong>demo</strong>. Aucune identité réelle n'est présente.
+  </p>
+  <div class="tableau-defilant">
+    <table>
+      <caption>Comptes disponibles</caption>
+      <thead>
+        <tr><th scope="col">Adresse</th><th scope="col">Nom affiché</th><th scope="col">Droits</th></tr>
+      </thead>
+      <tbody>
+        {% for compte in comptes %}
+        <tr>
+          <td><code>{{ compte.email }}</code></td>
+          <td>{{ compte.display_name }}</td>
+          <td>
+            {% if compte.is_medecin %}<span class="etiquette neutre">médecin</span>{% endif %}
+            {% if compte.is_admin %}<span class="etiquette neutre">administrateur</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3">Aucun compte : exécutez <code>python scripts/seed_demo.py</code>.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

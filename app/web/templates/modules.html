@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block titre %}Choix du module{% endblock %}
+{% block contenu %}
+<h1>Choisir un module</h1>
+
+<div class="grille">
+  <div class="carte">
+    <h2>Gardes de nuit, week-ends et jours fériés</h2>
+    <p>Campagne de désidératas, génération explicable, publication, reprises et échanges.</p>
+    <p><a class="bouton" href="/tableau-de-bord">Ouvrir ce module</a></p>
+  </div>
+
+  <div class="carte">
+    <h2>Permanences psychiatriques de jour</h2>
+    <p class="aide">
+      Matin 08:00–12:30 et après-midi 12:30–17:00. Comptes, rôles, notifications et
+      calendrier sont déjà partagés avec ce module, mais sa logique n'est pas
+      développée dans ce prototype.
+    </p>
+    <p><span class="etiquette neutre">⏳ Permanences de jour — à venir</span></p>
+    <p><button type="button" disabled aria-disabled="true">Ouvrir ce module</button></p>
+  </div>
+</div>
+
+<p class="hypothese">
+  Les deux modules partagent le même socle (comptes, rôles, notifications, calendrier).
+  Voir <code>DECISIONS.md</code> D-011 et <code>OPEN_QUESTIONS.md</code> Q-11.
+</p>
+{% endblock %}

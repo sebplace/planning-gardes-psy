@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block titre %}Reprises{% endblock %}
+{% block contenu %}
+<h1>Reprises de garde</h1>
+
+<div class="carte">
+  <h2>Comment fonctionne une reprise</h2>
+  <ol>
+    <li>La demande est diffusée <strong>simultanément</strong> à toutes les personnes éligibles.</li>
+    <li>L'identité du demandeur reste <strong>masquée</strong> jusqu'à l'attribution officialisée.</li>
+    <li>Toutes les réponses favorables sont collectées pendant une fenêtre adaptée à la
+        proximité de la garde. <strong>Répondre plus vite ne procure aucun avantage.</strong></li>
+    <li>La liste est figée, chaque candidature est revérifiée, puis un
+        <strong>tirage au sort auditable</strong> désigne la personne retenue.</li>
+    <li>Le résultat est <strong>immédiatement officiel</strong>, sans validation administrative.</li>
+    <li>Tant qu'aucun remplacement n'est confirmé, la garde reste à la charge du titulaire initial.</li>
+  </ol>
+</div>
+
+{% if sollicitations %}
+<div class="carte">
+  <h2>Gardes cherchant preneur (vous êtes sollicité·e)</h2>
+  <ul>
+    {% for sollicitation, wave in sollicitations %}
+    <li>
+      {{ format_date_fr(wave.request.assignment.post.occurrence.local_date) }} —
+      {{ wave.request.assignment.post.occurrence.garde_type.label }},
+      {{ wave.request.assignment.post.line.value }} — vague {{ wave.kind.value|lower }},
+      fenêtre jusqu'au {{ format_local(wave.closes_at) }}
+      · <a href="/reprises/{{ wave.request_id }}">Répondre</a>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if mes_gardes %}
+<div class="carte">
+  <h2>Demander une reprise pour une de mes gardes</h2>
+  <form method="post" action="/reprises/demander">
+    <p>
+      <label for="assignment_id">Garde concernée</label>
+      <select id="assignment_id" name="assignment_id" required>
+        {% for assignment, post, occurrence in mes_gardes %}
+        <option value="{{ assignment.id }}">
+          {{ occurrence.local_date }} — {{ occurrence.garde_type.label }} — {{ post.line.value }}
+        </option>
+        {% endfor %}
+      </select>
+    </p>
+    <p>
+      <label for="commentaire">Commentaire (facultatif)</label>
+      <input type="text" id="commentaire" name="commentaire" maxlength="300" size="50">
+      <span class="aide">Ne pas encoder d'information concernant un patient.</span>
+    </p>
+    <button type="submit">Ouvrir une demande de reprise</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="carte">
+  <h2>Demandes</h2>
+  {% if demandes %}
+  <div class="tableau-defilant">
+    <table>
+      <thead>
+        <tr><th scope="col">#</th><th scope="col">Date de garde</th><th scope="col">Ligne</th>
+            <th scope="col">Demandeur</th><th scope="col">État</th><th scope="col"></th></tr>
+      </thead>
+      <tbody>
+        {% for demande, visible in demandes %}
+        <tr>
+          <td>{{ demande.id }}</td>
+          <td>{{ demande.assignment.post.occurrence.local_date }}</td>
+          <td>{{ demande.assignment.post.line.value }}</td>
+          <td>
+            {% if visible %}{{ demande.requester.code }}
+            {% else %}<span class="etiquette neutre">🔒 masqué</span>{% endif %}
+          </td>
+          <td><span class="etiquette neutre">{{ demande.state.value }}</span></td>
+          <td><a href="/reprises/{{ demande.id }}">Détail</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="vide">Aucune demande de reprise.</p>{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block titre %}Comparaison des variantes{% endblock %}
+{% block contenu %}
+<h1>Exécution {{ run.id }} — comparaison des variantes</h1>
+
+<div class="carte">
+  <h2>Instantané reproductible</h2>
+  <dl>
+    <dt>Graine</dt><dd>{{ run.seed }}</dd>
+    <dt>Version des règles</dt><dd>{{ run.ruleset_version }}</dd>
+    <dt>Profil de règles</dt><dd>{{ run.rule_profile_label }}</dd>
+    <dt>Version du moteur</dt><dd>{{ run.engine_version }}</dd>
+    <dt>Empreinte des entrées</dt><dd><code>{{ run.input_snapshot_hash }}</code></dd>
+  </dl>
+  <p class="aide">
+    À données, paramètres et graine identiques, le moteur produit exactement le même résultat.
+  </p>
+</div>
+
+{% for detail in details %}
+{% set p = detail.proposition %}
+<div class="carte">
+  <h2>Variante {{ p.variant_index }}</h2>
+  <p>
+    Score total <strong>{{ '%.0f'|format(p.score_total) }}</strong> ·
+    {% if p.feasible %}
+      <span class="etiquette vert">✔ complète</span>
+    {% else %}
+      <span class="etiquette rouge">✘ incomplète</span>
+    {% endif %}
+    · {{ p.orange_count }} affectation(s) sur orange
+    · {{ p.default_availability_count }} sur disponibilité par défaut
+    · diversité minimale vs autres variantes : {{ '%.2f'|format(p.diversity_min) }}
+  </p>
+
+  <h3>Ventilation du score par critère souple</h3>
+  <div class="tableau-defilant">
+    <table>
+      <thead><tr><th scope="col">Critère</th><th scope="col">Contribution</th></tr></thead>
+      <tbody>
+        {% for cle, valeur in detail.score.items() %}
+        <tr><td>{{ cle }}</td><td>{{ '%.1f'|format(valeur) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if detail.tensions %}
+  <h3>Tensions signalées</h3>
+  <ul>{% for t in detail.tensions %}<li>{{ t }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  {% if detail.non_pourvus %}
+  <h3>Rapport d'impossibilité</h3>
+  <p class="message erreur" role="alert">
+    {{ detail.non_pourvus|length }} poste(s) non pourvu(s).
+    Aucune contrainte ferme n'a été relâchée automatiquement.
+  </p>
+  <div class="tableau-defilant">
+    <table>
+      <thead>
+        <tr><th scope="col">Date</th><th scope="col">Ligne</th><th scope="col">Type</th>
+            <th scope="col">Exclusions (contraintes fermes)</th></tr>
+      </thead>
+      <tbody>
+        {% for item in detail.non_pourvus[:40] %}
+        <tr>
+          <td>{{ item.date }}</td><td>{{ item.ligne }}</td><td>{{ item.type }}</td>
+          <td>
+            <details>
+              <summary>{{ item.exclusions|length }} personne(s) écartée(s)</summary>
+              <ul>
+                {% for exclusion in item.exclusions %}
+                <li><strong>{{ exclusion.profil }}</strong> — {{ exclusion.libelle }} : {{ exclusion.detail }}</li>
+                {% endfor %}
+              </ul>
+            </details>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <form method="post" action="/admin/execution/{{ run.id }}/retenir">
+    <input type="hidden" name="proposal_id" value="{{ p.id }}">
+    <button type="submit">Retenir cette variante pour révision</button>
+  </form>
+  <p class="aide">Le logiciel ne publie jamais seul : un administrateur contrôle, corrige,
+    valide, puis publie.</p>
+</div>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block titre %}Notifications{% endblock %}
+{% block contenu %}
+<h1>Notifications (boîte locale simulée)</h1>
+
+<p class="message info" role="status">
+  Aucun message n'est réellement envoyé. Cette boîte remplace la messagerie
+  institutionnelle pour la durée de la démonstration.
+</p>
+
+<div class="carte">
+  {% if messages %}
+  <div class="tableau-defilant">
+    <table>
+      <caption>{{ messages|length }} message(s)</caption>
+      <thead>
+        <tr><th scope="col">Date</th><th scope="col">Type</th><th scope="col">Destinataire</th>
+            <th scope="col">Objet</th><th scope="col">Contenu</th></tr>
+      </thead>
+      <tbody>
+        {% for message in messages %}
+        <tr>
+          <td>{{ format_local(message.created_at) }}</td>
+          <td>
+            {{ message.kind }}
+            {% if message.anonymised %}
+              <br><span class="etiquette neutre">🔒 anonymisé</span>
+            {% endif %}
+          </td>
+          <td>{{ message.recipient_label }}</td>
+          <td>{{ message.subject }}</td>
+          <td><details><summary>Lire</summary><pre>{{ message.body }}</pre></details></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="vide">Aucune notification.</p>{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block titre %}Journal d'audit{% endblock %}
+{% block contenu %}
+<h1>Journal d'audit</h1>
+
+{% if chaine_ok %}
+<p class="message succes" role="status">
+  Chaîne d'intégrité vérifiée : chaque événement est chaîné à l'empreinte du précédent.
+  Toute réécriture a posteriori serait détectée.
+</p>
+{% else %}
+<p class="message erreur" role="alert">
+  Anomalies détectées dans la chaîne d'audit :
+  <ul>{% for a in anomalies %}<li>{{ a }}</li>{% endfor %}</ul>
+</p>
+{% endif %}
+
+<div class="carte tableau-defilant">
+  <table>
+    <caption>{{ events|length }} derniers événements</caption>
+    <thead>
+      <tr>
+        <th scope="col">#</th><th scope="col">Date</th><th scope="col">Auteur</th>
+        <th scope="col">Action</th><th scope="col">Entité</th>
+        <th scope="col">Détail</th><th scope="col">Empreinte</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for event in events %}
+      <tr>
+        <td>{{ event.id }}</td>
+        <td>{{ format_local(event.at) }}</td>
+        <td>{{ event.actor_label }}</td>
+        <td>{{ event.action }}</td>
+        <td>{{ event.entity_type }} #{{ event.entity_id }}</td>
+        <td><details><summary>Voir</summary><pre>{{ event.payload_json }}</pre></details></td>
+        <td><code>{{ event.hash[:12] }}…</code></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

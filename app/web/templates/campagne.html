@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block titre %}Mes désidératas{% endblock %}
+{% block contenu %}
+<h1>Mes désidératas</h1>
+
+{% if not submission %}
+  <p class="vide">Aucune campagne ne vous concerne actuellement.</p>
+{% else %}
+
+<div class="carte">
+  <p>
+    Trimestre <strong>{{ campaign.quarter.label }}</strong> ·
+    état de ma réponse : <span class="etiquette neutre">{{ submission.state.value }}</span> ·
+    échéance : {{ format_local(campaign.deadline_at) }}
+  </p>
+  <p class="aide">
+    Rappels prévus à J-{{ campaign.reminder_offsets|join(', J-') }} avant l'échéance.
+    Les rappels cessent dès la validation de votre réponse.
+  </p>
+  <p class="hypothese">
+    Délai de grâce avant disponibilité par défaut : {{ campaign.grace_period_hours }} h —
+    hypothèse de démonstration (OPEN_QUESTIONS.md Q-08).
+    Exigence sur les paires fériées : {{ campaign.holiday_pair_requirement.value }} —
+    hypothèse de démonstration (Q-05).
+  </p>
+</div>
+
+{% if manquantes %}
+<div class="message alerte" role="alert">
+  <strong>Paires de jours fériés non couvertes :</strong>
+  <ul>{% for m in manquantes %}<li>{{ m }}</li>{% endfor %}</ul>
+  La validation restera impossible tant qu'une disponibilité suffisante n'est pas déclarée
+  sur au moins un membre de chaque paire.
+</div>
+{% endif %}
+
+<div class="carte">
+  <h2>Légende</h2>
+  <p>
+    <span class="etiquette vert">V — Vert : disponible</span>
+    <span class="etiquette orange">O — Orange : possible, à éviter si mieux</span>
+    <span class="etiquette rouge">R — Rouge : indisponibilité ferme</span>
+    <span class="etiquette defaut">D — Disponible par défaut, non confirmé</span>
+    <span class="etiquette neutre">— Non renseigné</span>
+  </p>
+  <p class="aide">
+    Un rouge est une interdiction absolue : ni le moteur, ni un administrateur, ni l'API
+    ne peuvent l'outrepasser. Vous seul·e pouvez le remplacer par orange ou vert.
+  </p>
+</div>
+
+<h2>Calendrier</h2>
+<div class="calendrier" role="group" aria-label="Calendrier des disponibilités">
+  <div class="entete">lundi</div><div class="entete">mardi</div><div class="entete">mercredi</div>
+  <div class="entete">jeudi</div><div class="entete">vendredi</div><div class="entete">samedi</div>
+  <div class="entete">dimanche</div>
+  {% for semaine in semaines %}
+    {% for occurrence in semaine %}
+      {% if occurrence is none %}
+        <div class="jour" aria-hidden="true"></div>
+      {% else %}
+        {% set entree = couleurs.get(occurrence.id) %}
+        {% set classe = 'v' if entree and entree.color.value == 'VERT'
+                        else 'o' if entree and entree.color.value == 'ORANGE'
+                        else 'r' if entree and entree.color.value == 'ROUGE'
+                        else 'd' if entree and entree.color.value == 'DISPO_DEFAUT' else '' %}
+        <div class="jour {{ classe }}">
+          <span class="numero">{{ occurrence.local_date.day }}/{{ occurrence.local_date.month }}</span>
+          <span class="aide">{{ occurrence.garde_type.code|lower }}</span><br>
+          {% if entree %}
+            <span class="etiquette {{ color_label[entree.color][2] }}">
+              {{ color_label[entree.color][0] }}
+            </span>
+            <span class="aide">{{ entree.display_label }}</span>
+          {% else %}
+            <span class="etiquette neutre">— non renseigné</span>
+          {% endif %}
+          {% if submission.state.value in ('NON_COMMENCEE', 'BROUILLON') %}
+          <form method="post" action="/campagne/couleur">
+            <input type="hidden" name="occurrence_id" value="{{ occurrence.id }}">
+            <button type="submit" name="couleur" value="VERT"
+                    aria-label="Marquer vert le {{ occurrence.local_date }}">V</button>
+            <button type="submit" name="couleur" value="ORANGE"
+                    aria-label="Marquer orange le {{ occurrence.local_date }}">O</button>
+            <button type="submit" name="couleur" value="ROUGE"
+                    aria-label="Marquer rouge le {{ occurrence.local_date }}">R</button>
+          </form>
+          {% endif %}
+        </div>
+      {% endif %}
+    {% endfor %}
+  {% endfor %}
+</div>
+
+{% if submission.state.value in ('NON_COMMENCEE', 'BROUILLON') %}
+<form method="post" action="/campagne/valider" class="carte">
+  <h2>Valider ma réponse</h2>
+  <p class="aide">Après validation, vous ne recevrez plus de rappel. Une réouverture par un
+    administrateur est possible, et elle est tracée.</p>
+  <button type="submit">Valider définitivement ma réponse</button>
+</form>
+{% else %}
+<div class="carte">
+  <p class="message succes" role="status">
+    Réponse {{ submission.state.value|lower }}
+    {% if submission.validated_at %} le {{ format_local(submission.validated_at) }}{% endif %}.
+    Les rappels ont cessé.
+  </p>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}

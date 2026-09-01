@@ -1,0 +1,75 @@
+"""Moteur de planification — paquet **pur**, sans dépendance à la base ni à HTTP.
+
+Voir ARCHITECTURE.md §5 et DECISIONS.md D-003 / D-005.
+"""
+
+from .types import (  # noqa: F401
+    AvailabilityIn,
+    BusyIntervalIn,
+    Color,
+    CoverageMode,
+    EngineInput,
+    Enforcement,
+    Explanation,
+    ExemptionIn,
+    HARD_CONSTRAINT_LABELS,
+    ImpossibilityReport,
+    Line,
+    PersonIn,
+    PostIn,
+    QuotaIn,
+    Rejection,
+    RestRuleIn,
+    RuleProfile,
+    Solution,
+    Status,
+    UnfilledPost,
+    diversity_distance,
+)
+from .context import Context, State  # noqa: F401
+from .hard import feasible_candidates, hard_violation  # noqa: F401
+from .scoring import marginal_cost, quota_gaps, tensions, total_score  # noqa: F401
+from .solver import (  # noqa: F401
+    ENGINE_VERSION,
+    GreedyLocalSearchBackend,
+    SolverBackend,
+    impossibility_report,
+    solve,
+)
+
+__all__ = [
+    "AvailabilityIn",
+    "BusyIntervalIn",
+    "Color",
+    "Context",
+    "CoverageMode",
+    "ENGINE_VERSION",
+    "EngineInput",
+    "Enforcement",
+    "ExemptionIn",
+    "Explanation",
+    "GreedyLocalSearchBackend",
+    "HARD_CONSTRAINT_LABELS",
+    "ImpossibilityReport",
+    "Line",
+    "PersonIn",
+    "PostIn",
+    "QuotaIn",
+    "Rejection",
+    "RestRuleIn",
+    "RuleProfile",
+    "Solution",
+    "SolverBackend",
+    "State",
+    "Status",
+    "UnfilledPost",
+    "diversity_distance",
+    "feasible_candidates",
+    "hard_violation",
+    "impossibility_report",
+    "marginal_cost",
+    "quota_gaps",
+    "solve",
+    "tensions",
+    "total_score",
+]

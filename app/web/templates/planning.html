@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block titre %}Planning publié{% endblock %}
+{% block contenu %}
+<h1>Planning publié</h1>
+
+{% if not version %}
+  <p class="vide">Aucun planning publié pour le moment.</p>
+{% else %}
+<div class="carte">
+  <p>
+    Trimestre <strong>{{ version.quarter.label }}</strong> ·
+    version <strong>{{ version.version_no }}</strong> ·
+    publiée le {{ format_local(version.published_at) }}
+  </p>
+  <p class="aide">
+    Un planning publié n'est jamais réécrit : toute modification crée une nouvelle version
+    datée et bascule la précédente en « remplacée ».
+  </p>
+  <p>
+    <a class="bouton secondaire" href="/planning/export.csv">Export CSV du planning</a>
+    <a class="bouton secondaire" href="/planning/export.xlsx">Export Excel du planning</a>
+    <a class="bouton secondaire" href="/planning/mon-calendrier.ics">Mon calendrier ICS</a>
+  </p>
+</div>
+
+<div class="carte tableau-defilant">
+  <table>
+    <caption>{{ lignes|length }} affectation(s)</caption>
+    <thead>
+      <tr>
+        <th scope="col">Date</th><th scope="col">Type</th><th scope="col">Mode</th>
+        <th scope="col">Ligne</th><th scope="col">Personne</th><th scope="col">Origine</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for assignment, post, occurrence in lignes %}
+      <tr>
+        <td>{{ format_date_fr(occurrence.local_date) }}</td>
+        <td>{{ occurrence.garde_type.label }}</td>
+        <td>
+          {{ occurrence.effective_mode.value }}
+          {% if occurrence.effective_mode.value == 'A' %}
+            <span class="aide">(senior seul en première ligne)</span>
+          {% else %}
+            <span class="aide">(assistant L1 + senior L2)</span>
+          {% endif %}
+        </td>
+        <td>{{ post.line.value }}</td>
+        <td>
+          {{ assignment.profile.code }}
+          {% if profile and assignment.profile_id == profile.id %}
+            <span class="etiquette neutre">vous</span>
+          {% endif %}
+        </td>
+        <td>{{ assignment.origin.value|lower }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if versions|length > 1 %}
+<div class="carte">
+  <h2>Historique des versions</h2>
+  <ul>
+    {% for v in versions %}
+    <li>Version {{ v.version_no }} — {{ v.state.value|lower }} — {{ format_local(v.published_at) }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

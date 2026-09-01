@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titre %}Planification des gardes{% endblock %} — Prototype</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <a class="saut-contenu" href="#contenu">Aller au contenu principal</a>
+
+  <p class="banniere-demo" role="note">{{ demo_banner }}</p>
+  <p class="banniere-patient" role="note">{{ patient_warning }}</p>
+
+  {% if user %}
+  <header class="principal">
+    <span class="titre">Gardes de nuit, week-ends et jours fériés</span>
+    <span>
+      {{ user.display_name }} —
+      {% if user.is_medecin %}médecin{% endif %}
+      {% if user.is_medecin and user.is_admin %} et {% endif %}
+      {% if user.is_admin %}administrateur{% endif %}
+      · <a href="/deconnexion">Se déconnecter</a>
+    </span>
+  </header>
+
+  <nav class="menu" aria-label="Navigation principale">
+    <ul>
+      <li><a href="/modules" {% if page == 'modules' %}aria-current="page"{% endif %}>Modules</a></li>
+      <li><a href="/tableau-de-bord" {% if page == 'tableau' %}aria-current="page"{% endif %}>Tableau de bord</a></li>
+      <li><a href="/campagne" {% if page == 'campagne' %}aria-current="page"{% endif %}>Mes désidératas</a></li>
+      <li><a href="/planning" {% if page == 'planning' %}aria-current="page"{% endif %}>Planning publié</a></li>
+      <li><a href="/reprises" {% if page == 'reprises' %}aria-current="page"{% endif %}>Reprises</a></li>
+      <li><a href="/echanges" {% if page == 'echanges' %}aria-current="page"{% endif %}>Échanges</a></li>
+      <li><a href="/notifications" {% if page == 'notifications' %}aria-current="page"{% endif %}>Notifications</a></li>
+      {% if user.is_admin %}
+      <li><a href="/admin" {% if page == 'admin' %}aria-current="page"{% endif %}>Suivi administratif</a></li>
+      <li><a href="/admin/quotas" {% if page == 'quotas' %}aria-current="page"{% endif %}>Quotas</a></li>
+      <li><a href="/projections" {% if page == 'projections' %}aria-current="page"{% endif %}>Projections</a></li>
+      <li><a href="/audit" {% if page == 'audit' %}aria-current="page"{% endif %}>Audit</a></li>
+      {% endif %}
+    </ul>
+  </nav>
+  {% endif %}
+
+  <main id="contenu">
+    {% for categorie, texte in flashes %}
+      <p class="message {{ categorie }}" role="{{ 'alert' if categorie in ('erreur','alerte') else 'status' }}">{{ texte }}</p>
+    {% endfor %}
+    {% block contenu %}{% endblock %}
+  </main>
+
+  <footer class="pied">
+    <p>
+      Prototype de démonstration — données entièrement fictives, aucun envoi réel.
+      Les valeurs marquées « hypothèse de démonstration » ne sont pas des règles validées.
+      Voir <code>OPEN_QUESTIONS.md</code> et <code>DECISIONS.md</code>.
+    </p>
+  </footer>
+</body>
+</html>

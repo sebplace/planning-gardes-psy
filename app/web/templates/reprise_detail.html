@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block titre %}Détail d'une reprise{% endblock %}
+{% block contenu %}
+<h1>Reprise {{ demande.id }}</h1>
+
+<div class="carte">
+  <p>
+    Garde du <strong>{{ format_date_fr(demande.assignment.post.occurrence.local_date) }}</strong>
+    — {{ demande.assignment.post.occurrence.garde_type.label }},
+    {{ demande.assignment.post.line.value }}<br>
+    État : <span class="etiquette neutre">{{ demande.state.value }}</span><br>
+    Demandeur :
+    {% if visible %}{{ demande.requester.code }}
+    {% else %}<span class="etiquette neutre">🔒 masqué jusqu'à l'attribution officialisée</span>{% endif %}<br>
+    Titulaire actuel : <strong>{{ demande.assignment.profile.code }}</strong>
+    <span class="aide">(la garde reste à sa charge tant qu'aucun remplacement n'est confirmé)</span>
+  </p>
+</div>
+
+{% for wave in demande.waves %}
+<div class="carte">
+  <h2>Vague {{ wave.kind.value|lower }}</h2>
+  <p>
+    État : <span class="etiquette neutre">{{ wave.state.value }}</span> ·
+    palier d'urgence : {{ wave.urgency_tier }} ·
+    ouverture {{ format_local(wave.opens_at) }} ·
+    clôture {{ format_local(wave.closes_at) }} ·
+    {{ wave.solicited_count }} personne(s) sollicitée(s) ·
+    {{ wave.candidacies|length }} candidature(s)
+  </p>
+  <p class="hypothese">
+    Fenêtre et rappels adaptés à la proximité de la garde — hypothèse de démonstration
+    (OPEN_QUESTIONS.md Q-09).
+  </p>
+
+  {% if wave.state.value == 'OUVERTE' and profile %}
+  <form method="post" action="/reprises/{{ demande.id }}/reponse">
+    <input type="hidden" name="wave_id" value="{{ wave.id }}">
+    <button type="submit" name="reponse" value="favorable">Je peux prendre cette garde</button>
+    <button type="submit" name="reponse" value="refus" class="secondaire">Je ne peux pas</button>
+  </form>
+  <p class="aide">Une réponse favorable est une candidature, pas une attribution.</p>
+  {% endif %}
+
+  {% if wave.frozen_at %}
+  <h3>Gel de la liste</h3>
+  <p>
+    Liste figée le {{ format_local(wave.frozen_at) }} ·
+    empreinte <code>{{ wave.list_hash[:24] }}…</code> ·
+    engagement sur la graine <code>{{ wave.seed_commitment[:24] }}…</code>
+  </p>
+  {% endif %}
+
+  {% if tirages.get(wave.id) %}
+    {% set draw, preuve, exclusions = tirages[wave.id] %}
+    <h3>Tirage au sort</h3>
+    <p>
+      Exécuté le {{ format_local(draw.executed_at) }}
+      {% if draw.single_candidate %}
+        · <span class="etiquette neutre">candidature unique : aucun aléa utile, mais
+          l'attribution résulte du même événement journalisé</span>
+      {% endif %}
+    </p>
+    <details open>
+      <summary>Preuve vérifiable</summary>
+      <dl>
+        <dt>Algorithme</dt><dd><code>{{ draw.algorithm }}</code></dd>
+        <dt>Liste figée</dt><dd><code>{{ preuve.liste_figee }}</code></dd>
+        <dt>Liste revalidée</dt><dd><code>{{ preuve.liste_valide }}</code></dd>
+        <dt>Engagement sur la graine</dt><dd><code>{{ preuve.engagement_graine }}</code></dd>
+        <dt>Graine révélée</dt><dd><code>{{ preuve.graine_revelee }}</code></dd>
+        <dt>HMAC</dt><dd><code>{{ preuve.hmac }}</code></dd>
+        <dt>Index retenu</dt><dd>{{ preuve.index }}</dd>
+        <dt>Vérification</dt><dd>{{ preuve.verification }}</dd>
+      </dl>
+    </details>
+    {% if exclusions %}
+    <h4>Candidatures écartées à la revérification</h4>
+    <ul>
+      {% for exclusion in exclusions %}
+      <li><strong>{{ exclusion.profil }}</strong> — {{ exclusion.motif }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  {% endif %}
+
+  <h3>Candidatures</h3>
+  {% if wave.candidacies %}
+  <ul>
+    {% for candidacy in wave.candidacies %}
+    <li>
+      {% if user.is_admin or demande.state.value == 'ATTRIBUEE' %}
+        {{ candidacy.profile.code }}
+      {% else %}<span class="aide">candidature anonyme</span>{% endif %}
+      — <span class="etiquette neutre">{{ candidacy.state.value }}</span>
+      {% if candidacy.exclusion_reason %}<br><span class="aide">{{ candidacy.exclusion_reason }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="aide">Aucune candidature déposée.</p>{% endif %}
+</div>
+{% endfor %}
+
+{% if demande.is_open %}
+<form method="post" action="/reprises/{{ demande.id }}/avancer" class="carte">
+  <button type="submit" class="secondaire">
+    Faire progresser (rappels, clôture de la fenêtre, tirage)
+  </button>
+  <p class="aide">
+    Dans une exploitation réelle, cette progression serait déclenchée par une tâche
+    planifiée. Le bouton n'existe ici que pour rendre la démonstration observable.
+  </p>
+</form>
+{% endif %}
+{% endblock %}

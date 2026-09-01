@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block titre %}Révision du planning{% endblock %}
+{% block contenu %}
+<h1>Version {{ version.version_no }} — révision, validation, publication</h1>
+
+<div class="carte">
+  <p>
+    État : <span class="etiquette neutre">{{ version.state.value }}</span>
+    · {{ lignes|length }} affectation(s)
+    {% if manquants %} · <span class="etiquette rouge">{{ manquants|length }} poste(s) non pourvu(s)</span>{% endif %}
+  </p>
+  <p class="aide">
+    Aucune interface ne permet de déroger à un rouge, à une inéligibilité, à une
+    incompatibilité ou à une règle ferme de repos. Toute correction est journalisée
+    avec son auteur, sa date et un motif.
+  </p>
+  {% if version.state.value in ('GENERE', 'EN_REVISION') %}
+  <form method="post" action="/admin/version/{{ version.id }}/action" style="display:inline">
+    <input type="hidden" name="action" value="valider">
+    <button type="submit">Valider le planning</button>
+  </form>
+  <form method="post" action="/admin/version/{{ version.id }}/action" style="display:inline">
+    <input type="hidden" name="action" value="regenerer">
+    <button type="submit" class="secondaire">Régénérer en conservant les verrous</button>
+  </form>
+  {% elif version.state.value == 'VALIDE' %}
+  <form method="post" action="/admin/version/{{ version.id }}/action">
+    <input type="hidden" name="action" value="publier">
+    <button type="submit">Publier ce planning</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="carte tableau-defilant">
+  <table>
+    <caption>Affectations</caption>
+    <thead>
+      <tr>
+        <th scope="col">Date</th><th scope="col">Ligne</th><th scope="col">Mode</th>
+        <th scope="col">Personne</th><th scope="col">Explication</th>
+        <th scope="col">Verrou</th><th scope="col">Corriger</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for assignment, post, occurrence in lignes %}
+      <tr>
+        <td>{{ occurrence.local_date }}</td>
+        <td>{{ post.line.value }}</td>
+        <td>{{ occurrence.effective_mode.value }}</td>
+        <td>{{ assignment.profile.code }}</td>
+        <td>
+          <details>
+            <summary>Pourquoi cette personne ?</summary>
+            <pre>{{ assignment.explanation_json }}</pre>
+          </details>
+        </td>
+        <td>
+          <form method="post" action="/admin/version/{{ version.id }}/action">
+            <input type="hidden" name="post_id" value="{{ post.id }}">
+            <input type="hidden" name="action"
+                   value="{{ 'deverrouiller' if assignment.is_locked else 'verrouiller' }}">
+            <button type="submit" class="secondaire">
+              {{ '🔒 verrouillée' if assignment.is_locked else '🔓 libre' }}
+            </button>
+          </form>
+        </td>
+        <td>
+          {% if version.state.value in ('GENERE', 'EN_REVISION') %}
+          <details>
+            <summary>Modifier</summary>
+            <form method="post" action="/admin/version/{{ version.id }}/corriger">
+              <input type="hidden" name="post_id" value="{{ post.id }}">
+              <label for="p-{{ post.id }}">Nouvelle personne</label>
+              <select id="p-{{ post.id }}" name="profile_id">
+                <option value="">— retirer l'affectation —</option>
+                {% for profil in profils %}
+                <option value="{{ profil.id }}" {% if profil.id == assignment.profile_id %}selected{% endif %}>
+                  {{ profil.code }} ({{ profil.status.value|lower }})
+                </option>
+                {% endfor %}
+              </select>
+              <label for="m-{{ post.id }}">Motif (obligatoire)</label>
+              <input type="text" id="m-{{ post.id }}" name="motif" required maxlength="300">
+              <button type="submit">Enregistrer</button>
+            </form>
+          </details>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

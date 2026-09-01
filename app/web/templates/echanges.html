@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block titre %}Échanges{% endblock %}
+{% block contenu %}
+<h1>Échange bilatéral de gardes</h1>
+
+<div class="carte">
+  <p>
+    Un échange n'est autorisé qu'entre <strong>deux gardes structurellement
+    équivalentes</strong> : même ligne, même catégorie comptable, même poids de décompte,
+    même classe d'échange validée, même classe de durée et mêmes exigences de couverture.
+  </p>
+  <p class="aide">
+    Au second accord, le système revérifie séparément pour chacun des deux médecins la
+    couleur actuelle, l'éligibilité, les conflits, le repos et l'activité du compte.
+    Si tout est satisfait, l'échange devient immédiatement officiel et les compteurs
+    restent inchangés. Sinon, il est refusé avec une explication : chaque médecin peut
+    alors ouvrir volontairement une demande de reprise, jamais déclenchée automatiquement.
+  </p>
+  <p class="hypothese">
+    Catalogue des classes considérées comme de même nature : hypothèse de démonstration
+    (OPEN_QUESTIONS.md Q-12).
+  </p>
+</div>
+
+{% if mes_gardes and autres_gardes %}
+<div class="carte">
+  <h2>Proposer un échange</h2>
+  <form method="post" action="/echanges/proposer">
+    <p>
+      <label for="a">Ma garde</label>
+      <select id="a" name="assignment_a_id" required>
+        {% for assignment, post, occurrence in mes_gardes %}
+        <option value="{{ assignment.id }}">
+          {{ occurrence.local_date }} — {{ occurrence.garde_type.label }} — {{ post.line.value }}
+        </option>
+        {% endfor %}
+      </select>
+    </p>
+    <p>
+      <label for="b">Garde souhaitée</label>
+      <select id="b" name="assignment_b_id" required>
+        {% for assignment, post, occurrence in autres_gardes %}
+        <option value="{{ assignment.id }}">
+          {{ occurrence.local_date }} — {{ occurrence.garde_type.label }} —
+          {{ post.line.value }} — {{ assignment.profile.code }}
+        </option>
+        {% endfor %}
+      </select>
+    </p>
+    <button type="submit">Proposer l'échange</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="carte">
+  <h2>Propositions</h2>
+  {% if propositions %}
+  <div class="tableau-defilant">
+    <table>
+      <thead>
+        <tr><th scope="col">#</th><th scope="col">Garde A</th><th scope="col">Garde B</th>
+            <th scope="col">État</th><th scope="col">Motif de refus</th><th scope="col"></th></tr>
+      </thead>
+      <tbody>
+        {% for proposition in propositions %}
+        <tr>
+          <td>{{ proposition.id }}</td>
+          <td>{{ proposition.assignment_a.post.occurrence.local_date }} —
+              {{ proposition.assignment_a.profile.code }}</td>
+          <td>{{ proposition.assignment_b.post.occurrence.local_date }} —
+              {{ proposition.assignment_b.profile.code }}</td>
+          <td>
+            <span class="etiquette {{ 'vert' if proposition.state.value == 'OFFICIEL'
+                                      else 'rouge' if proposition.state.value == 'REFUSE'
+                                      else 'neutre' }}">
+              {{ proposition.state.value }}
+            </span>
+          </td>
+          <td class="aide">{{ proposition.refusal_reason or '—' }}</td>
+          <td>
+            {% if proposition.state.value == 'PROPOSE' and profile
+                  and profile.id in [proposition.assignment_a.profile_id,
+                                     proposition.assignment_b.profile_id] %}
+            <form method="post" action="/echanges/{{ proposition.id }}/accepter">
+              <button type="submit">Accepter</button>
+            </form>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="vide">Aucune proposition d'échange.</p>{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block titre %}Quotas{% endblock %}
+{% block contenu %}
+<h1>Quotas — vue administrative</h1>
+
+<p class="hypothese">
+  Les cibles sont <strong>saisies manuellement</strong> tant que la formule
+  institutionnelle fondée sur la quotité/TIMA n'est pas stabilisée
+  (DECISIONS.md M-004, OPEN_QUESTIONS.md Q-01). Le moteur n'invente aucune formule.
+</p>
+<p class="aide">
+  Cette vue est réservée aux administrateurs. Aucune comparaison nominative n'est
+  exposée aux médecins.
+</p>
+
+{% for resume in resumes %}
+<div class="carte">
+  <h2>{{ resume.profile_code }} — année {{ resume.year_label }}</h2>
+  <div class="tableau-defilant">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Catégorie</th><th scope="col">Ligne</th><th scope="col">Cible</th>
+          <th scope="col">Réalisé</th><th scope="col">Programmé</th>
+          <th scope="col">Ajustements</th><th scope="col">Total</th>
+          <th scope="col">Restant</th><th scope="col">Écart</th>
+          <th scope="col">Min/Max fermes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ligne in resume.lines %}
+        <tr>
+          <td>{{ ligne.category_label }}</td><td>{{ ligne.line }}</td>
+          <td>{{ ligne.target }}</td><td>{{ ligne.realise }}</td>
+          <td>{{ ligne.programme }}</td><td>{{ ligne.ajustements }}</td>
+          <td>{{ ligne.total }}</td><td>{{ ligne.restant }}</td>
+          <td>{{ ligne.ecart }}</td>
+          <td>
+            {% if ligne.hard_minimum %}<span class="etiquette rouge">min ferme {{ ligne.minimum }}</span>{% endif %}
+            {% if ligne.hard_maximum %}<span class="etiquette rouge">max ferme {{ ligne.maximum }}</span>{% endif %}
+            {% if not ligne.hard_minimum and not ligne.hard_maximum %}<span class="aide">cible souple</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p><strong>Projection :</strong> {{ resume.projection }}</p>
+  {% for note in resume.notes %}<p class="hypothese">{{ note }}</p>{% endfor %}
+</div>
+{% else %}
+<p class="vide">Aucun quota défini.</p>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block titre %}Tableau de bord{% endblock %}
+{% block contenu %}
+<h1>Tableau de bord</h1>
+
+{% if not profile %}
+  <p class="message info">
+    Ce compte est purement administratif : il n'a ni désidératas, ni quotas, ni affectations.
+  </p>
+{% endif %}
+
+{% if sollicitations %}
+<div class="carte">
+  <h2>Gardes cherchant preneur</h2>
+  <p class="aide">
+    L'identité du demandeur reste masquée jusqu'à l'attribution officialisée.
+    Répondre plus vite ne procure aucun avantage : toutes les réponses favorables sont
+    collectées, puis départagées par tirage au sort.
+  </p>
+  <ul>
+    {% for sollicitation, wave in sollicitations %}
+    <li>
+      Garde du {{ format_date_fr(wave.request.assignment.post.occurrence.local_date) }}
+      ({{ wave.request.assignment.post.line.value }}) — vague {{ wave.kind.value|lower }},
+      fenêtre jusqu'au {{ format_local(wave.closes_at) }}
+      · <a href="/reprises/{{ wave.request_id }}">Répondre</a>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="grille">
+  <div class="carte">
+    <h2>Ma campagne de désidératas</h2>
+    {% if campagne %}
+      <p>
+        État : <span class="etiquette neutre">{{ campagne.state.value }}</span><br>
+        Trimestre : {{ campagne.campaign.quarter.label }}<br>
+        Échéance : {{ format_local(campagne.campaign.deadline_at) }}
+      </p>
+      <p><a class="bouton secondaire" href="/campagne">Ouvrir mon calendrier</a></p>
+    {% else %}
+      <p class="vide">Aucune campagne en cours.</p>
+    {% endif %}
+  </div>
+
+  <div class="carte">
+    <h2>Mes quotas</h2>
+    {% if quotas and quotas.lines %}
+      <p class="aide">Vos quotas ne sont visibles que de vous et des administrateurs.
+        Aucune comparaison nominative entre collègues n'est publiée.</p>
+      <div class="tableau-defilant">
+        <table>
+          <caption>Année {{ quotas.year_label }}</caption>
+          <thead>
+            <tr>
+              <th scope="col">Catégorie</th><th scope="col">Ligne</th>
+              <th scope="col">Cible</th><th scope="col">Réalisé</th>
+              <th scope="col">Programmé</th><th scope="col">Restant</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for ligne in quotas.lines %}
+            <tr>
+              <td>{{ ligne.category_label }}</td><td>{{ ligne.line }}</td>
+              <td>{{ ligne.target }}</td><td>{{ ligne.realise }}</td>
+              <td>{{ ligne.programme }}</td><td>{{ ligne.restant }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Projection :</strong> {{ quotas.projection }}</p>
+      {% for note in quotas.notes %}<p class="hypothese">{{ note }}</p>{% endfor %}
+    {% else %}
+      <p class="vide">Aucun quota défini.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="carte">
+  <h2>Mes gardes publiées</h2>
+  {% if affectations %}
+  <p>
+    <a class="bouton secondaire" href="/planning/mon-calendrier.ics">Exporter mon calendrier (ICS)</a>
+  </p>
+  <div class="tableau-defilant">
+    <table>
+      <caption>{{ affectations|length }} garde(s)</caption>
+      <thead>
+        <tr>
+          <th scope="col">Date</th><th scope="col">Type</th><th scope="col">Ligne</th>
+          <th scope="col">Horaires</th><th scope="col">Origine</th><th scope="col">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for assignment, post, occurrence in affectations %}
+        <tr>
+          <td>{{ format_date_fr(occurrence.local_date) }}</td>
+          <td>{{ occurrence.garde_type.label }}</td>
+          <td>{{ post.line.value }}{% if post.line.value == 'L1' %} (première ligne){% else %} (deuxième ligne){% endif %}</td>
+          <td>{{ format_local(occurrence.start_at, "%d/%m %H:%M") }} → {{ format_local(occurrence.end_at, "%d/%m %H:%M") }}</td>
+          <td>{{ assignment.origin.value|lower }}</td>
+          <td>
+            {% if occurrence.start_at > now %}
+              <a href="/reprises">Demander une reprise</a>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <p class="vide">Aucune garde publiée à ce jour.</p>
+  {% endif %}
+</div>
+{% endblock %}

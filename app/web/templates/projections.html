@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block titre %}Projections{% endblock %}
+{% block contenu %}
+<h1>Projections et simulations capacitaires</h1>
+
+<p class="message alerte" role="status">
+  <strong>Simulation — non applicable au planning réel.</strong>
+  Un scénario ne modifie jamais comptes, quotas, disponibilités ni planning.
+  Sa promotion vers une configuration réelle exige une action administrative explicite,
+  une confirmation et une trace d'audit.
+</p>
+
+<div class="carte">
+  {% if scenarios %}
+  <div class="tableau-defilant">
+    <table>
+      <caption>Scénarios enregistrés</caption>
+      <thead>
+        <tr>
+          <th scope="col">Scénario</th><th scope="col">Verdict</th>
+          <th scope="col">Postes requis</th><th scope="col">Non couverts</th>
+          <th scope="col">L1 senior</th><th scope="col">L2 senior</th>
+          <th scope="col"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for scenario in scenarios %}
+        {% set result = latest.get(scenario.id) %}
+        {% set structural = result.structural_json | fromjson if result else none %}
+        <tr>
+          <td>{{ scenario.name }}</td>
+          <td>
+            {% if result %}
+              <span class="etiquette {{ 'vert' if result.verdict.startswith('théoriquement') else 'rouge' }}">
+                {{ result.verdict }}
+              </span>
+            {% else %}<span class="aide">non calculé</span>{% endif %}
+          </td>
+          <td>{{ structural.posts_required if structural else '—' }}</td>
+          <td>{{ structural.posts_uncovered if structural else '—' }}</td>
+          <td>{{ structural.senior_l1 if structural else '—' }}</td>
+          <td>{{ structural.senior_l2 if structural else '—' }}</td>
+          <td><a href="/projections/{{ scenario.id }}">Détail</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="vide">
+    Aucun scénario. Exécutez <code>python scripts/seed_demo.py</code> pour en créer.
+  </p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,113 @@
+# OPEN_QUESTIONS.md — Questions ouvertes : rien n'a été inventé
+
+Chaque question ci-dessous correspond à une valeur **non validée institutionnellement**.
+Règle appliquée sans exception :
+
+1. la valeur est **administrable** (paramètre en base, modifiable sans redéploiement) ;
+2. la valeur de démonstration est **clairement étiquetée** dans l'interface et les exports ;
+3. aucun écran, aucun export et aucune explication ne la présente comme une règle validée.
+
+Marqueur utilisé dans l'interface : **« hypothèse de démonstration »**.
+
+---
+
+## Q-01 — Quotas exacts et future formule TIMA
+**Statut** Ouverte · **Impact** fort
+Aucune formule n'est appliquée. Les cibles sont saisies manuellement (M-004). La quotité est
+stockée en dixièmes avec historique daté, ce qui permettra plus tard une formule fondée sur
+les dixièmes, les périodes d'activité et des arrondis globaux.
+*Valeur de démonstration* : cibles fictives variées par personne, catégorie et ligne.
+*Où* : `quota_targets.source = 'MANUEL_ADMIN'`, écran Quotas, module Projections
+(formules hypothétiques étiquetées).
+
+## Q-02 — Règles liées à l'âge
+**Statut** Ouverte · **Impact** moyen
+**Aucun seuil d'âge n'est codé.** Le modèle n'expose que des exemptions et réductions
+datées et commentées, sans motif normatif implicite. Si une règle d'âge est un jour validée,
+elle se traduira par des exemptions générées, pas par une condition en dur.
+
+## Q-03 — Horaires exacts de certains types de garde
+**Statut** Ouverte · **Impact** moyen
+*Valeurs de démonstration* : nuit de semaine 20:00→08:00, nuit du vendredi 20:00→08:00,
+samedi 08:00→dimanche 08:00, dimanche 08:00→lundi 08:00, veille de férié 20:00→08:00,
+jour férié 08:00→08:00 (lendemain).
+*Où* : `garde_types.start_time` / `end_time` / `crosses_midnight`, administrables.
+
+## Q-04 — Rattachement des veilles de jours fériés
+**Statut** Ouverte · **Impact** moyen
+*Hypothèse de démonstration* : la veille nocturne d'un jour férié est comptée dans la
+catégorie « week-ends et veilles de jours fériés », et **peut** être rattachée à la période
+fériée d'une paire via `holiday_pair_members.include_eve`.
+*Où* : mapping type → catégorie entièrement administrable.
+
+## Q-05 — Paires fériées : vert seul, ou vert + orange ?
+**Statut** Ouverte · **Impact** moyen
+*Valeur de démonstration* : `VERT_ORANGE`.
+*Où* : `campaigns.holiday_pair_requirement`, choisi par l'administrateur à l'ouverture.
+Rappel : après l'échéance et l'application régulière du mécanisme de non-réponse,
+`DISPO_DEFAUT` compte pour cette règle, tout en restant distinct d'un vert déclaré.
+
+## Q-06 — Repos minimal et gardes rapprochées
+**Statut** Ouverte · **Impact** fort
+*Valeurs de démonstration* : repos **ferme** de 24 h entre deux fins/débuts de garde ;
+espacement **souple** cible de 7 jours ; maximum souple de 2 week-ends consécutifs.
+*Où* : `rest_rules` avec `enforcement` = `FERME` ou `SOUPLE`, `params_json`, versionnées.
+Le caractère ferme ou souple de chaque règle est **une décision institutionnelle attendue**.
+
+## Q-07 — Ordre et pondération exacts des critères souples
+**Statut** Ouverte sauf pour la priorité seniors (M-006, tranchée) · **Impact** fort
+*Valeurs de démonstration* : S01 vert/orange 100 · S02 quotas 60 · S05 espacement 40 ·
+S06 concentration 30 · S03 rattrapage 25 · S07 pénibilité 20 · S04 multiplicateur seniors ×3.
+*Où* : profil de règles `OPERATIONNEL` versionné, table `rule_profiles`.
+
+## Q-08 — Délai de grâce avant disponibilité par défaut
+**Statut** Ouverte · **Impact** fort
+*Valeur de démonstration* : **48 h** après l'échéance et après l'envoi des relances prévues.
+*Où* : `campaigns.grace_period_hours`.
+Une validation tardive pendant le délai de grâce **annule** la conversion ; une prolongation
+ou une réouverture **reprogramme** la tâche sans double événement ni double notification.
+
+## Q-09 — Seuils de proximité, fenêtres et rappels des vagues verte et orange
+**Statut** Ouverte · **Impact** fort
+*Valeurs de démonstration* (profil `urgence_demo_v1`) :
+
+| Délai avant la garde | Fenêtre | Rappels |
+|---|---|---|
+| < 12 h | 90 min | +30 min, +60 min |
+| 12 h – 48 h | 6 h | +2 h, +4 h |
+| 48 h – 7 j | 24 h | +8 h, +16 h |
+| > 7 j | 72 h | +24 h, +48 h |
+
+*Où* : `urgency_profiles`, versionné et administrable.
+
+## Q-10 — Préférences communes ou distinctes selon la ligne
+**Statut** Ouverte · **Impact** moyen
+Le modèle **supporte déjà** une couleur par ligne : `availabilities.line` est nullable.
+*Hypothèse de démonstration* : la saisie produit une couleur unique (`line = NULL`)
+applicable à toutes les lignes éligibles de la date. Aucune migration ne sera nécessaire pour
+passer à des couleurs distinctes par ligne.
+
+## Q-11 — Règles du futur module de permanences de jour
+**Statut** Ouverte · **Impact** faible pour ce prototype
+Seuls les objets et la navigation sont préparés (`module = PERMANENCES_JOUR`).
+Créneaux de démonstration relevés du brief : matin 08:00–12:30, après-midi 12:30–17:00.
+Aucune logique de campagne mensuelle, de récurrence ou de volontariat n'est implémentée.
+
+## Q-12 — Catalogue exact des classes de gardes équivalentes pour un échange
+**Statut** Ouverte · **Impact** fort
+*Hypothèse de démonstration* : une classe d'échange par type, sauf « samedi » et « dimanche »
+regroupés dans la classe `WEEKEND_24H`.
+L'équivalence exigée reste cumulative et **ne peut pas** être contournée par la classe seule :
+même ligne, même catégorie comptable, même poids de décompte, même classe d'échange,
+même classe de durée, mêmes exigences de couverture.
+*Où* : `exchange_classes` + contrôle explicite dans `swap_service.check_equivalence()`.
+
+---
+
+## Points volontairement laissés sans valeur
+
+- Aucun barème, aucune sanction, aucun classement entre médecins.
+- Aucune règle d'âge.
+- Aucune formule TIMA opérationnelle.
+- Aucun seuil « acceptable » de charge décidé par le logiciel : le module de projections
+  compare des hypothèses, il ne recommande pas.
