@@ -167,3 +167,19 @@ secret fort régénéré. `production` reste réservé à une future app+base di
 - Sémantique « pondération de garde » (84/10) vs quotité : traitée comme dixièmes datés, distincte
   de la quotité de temps de travail.
 - Traitement des DISPO_DEFAUT en reprise L2 : laissé ouvert (non inclus par défaut), Q nouvelle.
+
+---
+
+## Avancement (02/09/2026) — tranches livrées après P0
+
+Toutes prouvées par tests (suite complète verte, 85 tests) ; déploiement à suivre.
+
+- P1.9 horaires : **corrigé** (17-8 lun-jeu, 9-9 sam/dim/férié ; vendredi/veille 17-8 hypothèse démo). Tests : `test_metier_p1.py` (horaires confirmés + absence des anciens 20h/8-8).
+- P1.15 orange en L1 : **corrigé** (contrainte ferme H02c : orange possible en L2 uniquement). Tests : orange interdit L1 / possible L2.
+- P4.8 bornes de génération : **corrigé** (variantes 1..3 et diversité 0..1 bornées côté service ; 422 en API, clamp en UI). Tests : service + API.
+- P4.9 avancement de reprise : **corrigé** (réservé admin en UI et API ; un médecin reçoit 403). Tests : médecin 403 / admin franchit l'autorisation.
+- P4.12 injection CSV : **corrigé** (neutralisation des formules + module csv pour l'échappement, appliqué CSV et XLSX). Test : `_csv_safe`.
+- P4.13 health : **ajouté** (`/health/live` 200, `/health/ready` 200/503, sans détail sensible). Tests inclus.
+- P2.2 une version publiée par trimestre : **garanti en base** (index unique partiel `uq_one_published_per_quarter` + migration Alembic `b2f1a7c9d3e0`) en plus de la démotion atomique existante. Tests : doublon rejeté (IntegrityError) + republication bascule en REMPLACE.
+
+Restent à traiter (tranches suivantes) : P1 (reseed 15 seniors 84/10, 3 assistants 19/10/2026-03/10/2027 scénarios 57/68, 6 compteurs seniors + sous-compteurs assistants, campagne T1, 6 permissions distinctes, ordre souple 1..7, reprises L1/L2 nouvelle logique une collecte, repos 12/24h, plafond mensuel administrable NULL), P2 (immuabilité publication UI/services/API, concurrence réelle 2 connexions, motifs neutres collègues, preuve tirage anonymisée, refus non-tirable, EN_REVISION invisible), P3 (UI Quotas + Projections), P4 (CSRF, Argon2id, session opaque révocable, IDOR systématique, logs expurgés, OpenAPI enrichi).

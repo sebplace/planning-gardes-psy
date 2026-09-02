@@ -87,6 +87,26 @@ def create_app() -> FastAPI:
             status_code=403,
         )
 
+    @app.get("/health/live")
+    def health_live():  # pragma: no cover - trivial
+        # Vivacité : aucun détail sensible.
+        return {"status": "ok"}
+
+    @app.get("/health/ready")
+    def health_ready():
+        # Disponibilité : vérifie l'accès à la base, sans divulguer de détail.
+        from fastapi.responses import JSONResponse
+        from sqlalchemy import text
+
+        from .db import engine
+
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+        except Exception:
+            return JSONResponse({"status": "unavailable"}, status_code=503)
+        return {"status": "ready"}
+
     @app.on_event("startup")
     def _startup() -> None:  # pragma: no cover - initialisation
         # Garde-fou : refuse de démarrer en staging/production avec un secret faible

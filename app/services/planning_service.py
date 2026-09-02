@@ -74,6 +74,11 @@ def run_engine(
     force: bool = False,
 ) -> EngineRun:
     """Exécute le moteur et persiste un instantané reproductible."""
+    # Bornes serveur (P4.8) : jamais de valeurs hors plage, quel que soit l'appelant.
+    if not isinstance(variants, int) or not (1 <= variants <= 3):
+        raise ValueError("Le nombre de variantes doit être un entier entre 1 et 3.")
+    if not (0.0 <= float(min_diversity) <= 1.0):
+        raise ValueError("La diversité minimale doit être comprise entre 0 et 1.")
     blockers = generation_blockers(session, quarter)
     run = EngineRun(
         quarter_id=quarter.id,

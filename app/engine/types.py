@@ -70,6 +70,7 @@ class Enforcement(str, Enum):
 # Codes de contraintes fermes — utilisés dans les explications et rapports.
 H_ROUGE = "H02_ROUGE"
 H_NON_RENSEIGNE = "H02b_NON_RENSEIGNE"
+H_ORANGE_L1 = "H02c_ORANGE_INTERDIT_EN_L1"
 H_ASSISTANT_L2 = "H03_ASSISTANT_JAMAIS_L2"
 H_L2_NON_SENIOR = "H04_L2_RESERVEE_SENIOR"
 H_STATUT_POSTE = "H10_STATUT_EXIGE_PAR_LE_POSTE"
@@ -85,6 +86,7 @@ H_DOUBLE_POSTE = "H11_DEUX_POSTES_MEME_OCCURRENCE"
 HARD_CONSTRAINT_LABELS: Mapping[str, str] = {
     H_ROUGE: "Indisponibilité rouge déclarée par la personne",
     H_NON_RENSEIGNE: "Disponibilité non renseignée (génération bloquée en amont)",
+    H_ORANGE_L1: "Orange : possible en deuxième ligne uniquement, jamais en première ligne",
     H_ASSISTANT_L2: "Un assistant n'est jamais en deuxième ligne",
     H_L2_NON_SENIOR: "Toute deuxième ligne est assurée par un senior",
     H_STATUT_POSTE: "Statut professionnel exigé par le poste non satisfait",

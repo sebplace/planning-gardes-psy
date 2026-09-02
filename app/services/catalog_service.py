@@ -53,19 +53,22 @@ EXCHANGE_CLASSES = [
 ]
 
 # Horaires : OPEN_QUESTIONS.md Q-03 (hypothèses de démonstration).
+# Confirmés par le client : lun-jeu hors férié 17h->8h ; samedi/dimanche/férié 9h->9h.
+# Non confirmés (hypothèse de démonstration, administrables) : vendredi et veille de
+# férié, alignés par défaut sur 17h->8h (jamais 20h).
 GARDE_TYPES = [
     ("NUIT_SEMAINE", "Nuit de semaine (lundi à jeudi)", "NUITS_LJ",
-     time(20, 0), time(8, 0), "NUIT_12H", "NUIT_SEMAINE"),
+     time(17, 0), time(8, 0), "NUIT_12H", "NUIT_SEMAINE"),
     ("NUIT_VENDREDI", "Nuit du vendredi", "WEEKENDS_VEILLES",
-     time(20, 0), time(8, 0), "NUIT_12H", "NUIT_VENDREDI"),
-    ("SAMEDI", "Samedi 8 h au dimanche 8 h", "WEEKENDS_VEILLES",
-     time(8, 0), time(8, 0), "JOUR_24H", "WEEKEND_24H"),
-    ("DIMANCHE", "Dimanche 8 h au lundi 8 h", "WEEKENDS_VEILLES",
-     time(8, 0), time(8, 0), "JOUR_24H", "WEEKEND_24H"),
+     time(17, 0), time(8, 0), "NUIT_12H", "NUIT_VENDREDI"),
+    ("SAMEDI", "Samedi 9 h au dimanche 9 h", "WEEKENDS_VEILLES",
+     time(9, 0), time(9, 0), "JOUR_24H", "WEEKEND_24H"),
+    ("DIMANCHE", "Dimanche 9 h au lundi 9 h", "WEEKENDS_VEILLES",
+     time(9, 0), time(9, 0), "JOUR_24H", "WEEKEND_24H"),
     ("VEILLE_FERIE", "Nuit précédant un jour férié", "WEEKENDS_VEILLES",
-     time(20, 0), time(8, 0), "NUIT_12H", "VEILLE_FERIE"),
-    ("JOUR_FERIE", "Garde d'un jour férié", "FERIES",
-     time(8, 0), time(8, 0), "JOUR_24H", "JOUR_FERIE"),
+     time(17, 0), time(8, 0), "NUIT_12H", "VEILLE_FERIE"),
+    ("JOUR_FERIE", "Garde d'un jour férié (9 h au lendemain 9 h)", "FERIES",
+     time(9, 0), time(9, 0), "JOUR_24H", "JOUR_FERIE"),
 ]
 
 REST_RULES = [

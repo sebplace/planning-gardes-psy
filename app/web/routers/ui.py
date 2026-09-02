@@ -351,10 +351,26 @@ def planning(
                   version=version, lignes=lignes, profile=profile, versions=versions)
 
 
+def _csv_safe(value) -> str:
+    """Neutralise l'injection de formules dans les tableurs (CSV/Excel).
+
+    Une cellule commençant par '=', '+', '-', '@', ou une tabulation/retour
+    chariot peut être interprétée comme une formule : on la préfixe d'une
+    apostrophe. L'échappement des séparateurs/retours est géré par le module csv.
+    """
+    text = "" if value is None else str(value)
+    if text and text[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
+
+
 @router.get("/planning/export.csv")
 def export_csv(
     user: User | None = Depends(optional_user), session: Session = Depends(get_session)
 ):
+    import csv
+    import io
+
     from fastapi.responses import PlainTextResponse
 
     _require(user)
@@ -362,7 +378,9 @@ def export_csv(
         select(ScheduleVersion).where(ScheduleVersion.state == ScheduleState.PUBLIE)
         .order_by(ScheduleVersion.id.desc())
     ).scalars().first()
-    lines = ["date;type;ligne;statut_requis;personne;origine"]
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, delimiter=";", quoting=csv.QUOTE_MINIMAL)
+    writer.writerow(["date", "type", "ligne", "statut_requis", "personne", "origine"])
     if version:
         rows = session.execute(
             select(Assignment, CoveragePost, GardeOccurrence)
@@ -372,11 +390,15 @@ def export_csv(
             .order_by(GardeOccurrence.start_at)
         ).all()
         for assignment, post, occurrence in rows:
-            lines.append(
-                f"{occurrence.local_date};{occurrence.garde_type.code};{post.line.value};"
-                f"{post.required_status.value};{assignment.profile.code};{assignment.origin.value}"
-            )
-    return PlainTextResponse("\n".join(lines), media_type="text/csv; charset=utf-8")
+            writer.writerow([
+                _csv_safe(occurrence.local_date),
+                _csv_safe(occurrence.garde_type.code),
+                _csv_safe(post.line.value),
+                _csv_safe(post.required_status.value),
+                _csv_safe(assignment.profile.code),
+                _csv_safe(assignment.origin.value),
+            ])
+    return PlainTextResponse(buffer.getvalue(), media_type="text/csv; charset=utf-8")
 
 
 @router.get("/planning/export.xlsx")
@@ -412,15 +434,15 @@ def export_xlsx(
         ).all()
         for assignment, post, occurrence in rows:
             feuille.append([
-                occurrence.local_date.isoformat(),
-                occurrence.garde_type.label,
-                occurrence.effective_mode.value,
-                post.line.value,
-                post.required_status.value,
-                assignment.profile.code,
-                assignment.origin.value,
-                format_local(occurrence.start_at),
-                format_local(occurrence.end_at),
+                _csv_safe(occurrence.local_date.isoformat()),
+                _csv_safe(occurrence.garde_type.label),
+                _csv_safe(occurrence.effective_mode.value),
+                _csv_safe(post.line.value),
+                _csv_safe(post.required_status.value),
+                _csv_safe(assignment.profile.code),
+                _csv_safe(assignment.origin.value),
+                _csv_safe(format_local(occurrence.start_at)),
+                _csv_safe(format_local(occurrence.end_at)),
             ])
     note = classeur.create_sheet("Avertissement")
     note.append(["Prototype de démonstration — données entièrement fictives."])
@@ -509,6 +531,8 @@ def admin_generate(
     if not user.is_admin:
         raise HTTPException(403, "Réservé aux administrateurs.")
     quarter = session.get(Quarter, quarter_id)
+    # Bornes serveur (P4.8) : variantes limitées à 1..3.
+    variantes = max(1, min(3, variantes))
     run = planning_service.run_engine(
         session, quarter, admin=user, seed=graine, variants=variantes, min_diversity=0.08
     )
@@ -797,6 +821,8 @@ def handover_advance(
     session: Session = Depends(get_session),
 ):
     _require(user)
+    if not user.is_admin:
+        raise HTTPException(403, "Réservé aux administrateurs.")
     demande = session.get(HandoverRequest, request_id)
     try:
         handover_service.advance(session, demande)

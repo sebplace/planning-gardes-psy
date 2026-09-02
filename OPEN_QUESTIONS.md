@@ -27,10 +27,11 @@ datées et commentées, sans motif normatif implicite. Si une règle d'âge est 
 elle se traduira par des exemptions générées, pas par une condition en dur.
 
 ## Q-03 — Horaires exacts de certains types de garde
-**Statut** Ouverte · **Impact** moyen
-*Valeurs de démonstration* : nuit de semaine 20:00→08:00, nuit du vendredi 20:00→08:00,
-samedi 08:00→dimanche 08:00, dimanche 08:00→lundi 08:00, veille de férié 20:00→08:00,
-jour férié 08:00→08:00 (lendemain).
+**Statut** Partiellement tranchée · **Impact** moyen
+*Confirmés par le client (02/09/2026)* : lundi à jeudi hors férié **17:00 → 08:00** ;
+samedi, dimanche et jour férié **09:00 → 09:00 (lendemain)**.
+*Encore hypothèses de démonstration (administrables)* : nuit du vendredi et veille de
+jour férié, alignées par défaut sur **17:00 → 08:00** (jamais 20:00).
 *Où* : `garde_types.start_time` / `end_time` / `crosses_midnight`, administrables.
 
 ## Q-04 — Rattachement des veilles de jours fériés

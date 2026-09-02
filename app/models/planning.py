@@ -9,10 +9,12 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -131,6 +133,14 @@ class ScheduleVersion(Base, TimestampMixin):
     __tablename__ = "schedule_versions"
     __table_args__ = (
         UniqueConstraint("quarter_id", "version_no", name="uq_schedule_version"),
+        # P2.2 : au plus UNE version publiée par trimestre (garanti en base).
+        Index(
+            "uq_one_published_per_quarter",
+            "quarter_id",
+            unique=True,
+            sqlite_where=text("state = 'PUBLIE'"),
+            postgresql_where=text("state = 'PUBLIE'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

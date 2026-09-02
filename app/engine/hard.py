@@ -18,6 +18,7 @@ from .types import (
     H_L2_NON_SENIOR,
     H_MAX_FERME,
     H_NON_RENSEIGNE,
+    H_ORANGE_L1,
     H_REPOS,
     H_ROUGE,
     H_STATUT_POSTE,
@@ -94,6 +95,13 @@ def hard_violation(ctx: Context, state: State, post: PostIn, person: PersonIn) -
             H_ROUGE,
             "Indisponibilité rouge : seule la personne concernée peut la modifier. "
             "Aucune dérogation n'existe.",
+        )
+    # ---- H02c : orange -> deuxième ligne uniquement ------------------------ #
+    if color is Color.ORANGE and post.line is Line.L1:
+        return rej(
+            H_ORANGE_L1,
+            "Disponibilité orange : possible en deuxième ligne uniquement, "
+            "jamais en première ligne.",
         )
 
     # ---- H08 : exemptions, quota nul, maximum ferme ------------------------ #

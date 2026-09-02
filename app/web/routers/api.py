@@ -191,10 +191,13 @@ def generate(
     quarter = session.get(Quarter, payload.quarter_id)
     if quarter is None:
         raise HTTPException(404, "Trimestre inconnu.")
-    run = planning_service.run_engine(
-        session, quarter, admin=admin, seed=payload.seed,
-        variants=payload.variants, min_diversity=payload.min_diversity,
-    )
+    try:
+        run = planning_service.run_engine(
+            session, quarter, admin=admin, seed=payload.seed,
+            variants=payload.variants, min_diversity=payload.min_diversity,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     session.commit()
     return {
         "execution": run.id,
@@ -308,7 +311,7 @@ def candidate(
 @router.post("/handover/requests/{request_id}/advance")
 def advance_handover(
     request_id: int,
-    user: User = Depends(current_user),
+    user: User = Depends(require_admin_user),
     session: Session = Depends(get_session),
 ):
     request_obj = session.get(HandoverRequest, request_id)
