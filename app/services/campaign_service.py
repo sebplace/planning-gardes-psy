@@ -27,6 +27,7 @@ from ..models import (
     HolidayRequirement,
     Line,
     ProfessionalProfile,
+    Status,
     Submission,
     SubmissionState,
     User,
@@ -132,6 +133,13 @@ def set_availability(
             "La disponibilité par défaut ne peut pas être saisie : elle résulte "
             "uniquement du mécanisme de non-réponse."
         )
+    # P1.4 : un assistant ne saisit que vert ou rouge, jamais orange.
+    if color is Color.ORANGE:
+        profile = session.get(ProfessionalProfile, submission.profile_id)
+        if profile is not None and profile.status is Status.ASSISTANT:
+            raise CampaignError(
+                "Un assistant déclare uniquement vert ou rouge, jamais orange."
+            )
     entry = session.execute(
         select(Availability).where(
             Availability.submission_id == submission.id,

@@ -25,6 +25,7 @@ from .base import (  # noqa: F401
 from .accounts import (  # noqa: F401
     ActivityPeriod,
     Eligibility,
+    GardeWeightHistory,
     ProfessionalProfile,
     QuotiteHistory,
     User,

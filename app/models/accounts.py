@@ -49,6 +49,9 @@ class ProfessionalProfile(Base, TimestampMixin):
     quotite_history: Mapped[list["QuotiteHistory"]] = relationship(
         back_populates="profile", cascade="all, delete-orphan"
     )
+    garde_weight_history: Mapped[list["GardeWeightHistory"]] = relationship(
+        back_populates="profile", cascade="all, delete-orphan"
+    )
     eligibilities: Mapped[list["Eligibility"]] = relationship(
         back_populates="profile", cascade="all, delete-orphan"
     )
@@ -78,6 +81,13 @@ class ProfessionalProfile(Base, TimestampMixin):
             if entry.start_date <= day and (entry.end_date is None or day <= entry.end_date):
                 return entry.tenths
         return 10
+
+    def garde_weight_on(self, day: date) -> int | None:
+        """Pondération de garde applicable à une date (dixièmes), ou None si non définie."""
+        for entry in sorted(self.garde_weight_history, key=lambda q: q.start_date, reverse=True):
+            if entry.start_date <= day and (entry.end_date is None or day <= entry.end_date):
+                return entry.weight_tenths
+        return None
 
     def eligible_for(self, line: Line, garde_type_id: int | None, day: date) -> bool:
         """Une éligibilité explicite prime ; à défaut, la règle structurelle s'applique :
@@ -143,6 +153,26 @@ class QuotiteHistory(Base, TimestampMixin):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     profile: Mapped[ProfessionalProfile] = relationship(back_populates="quotite_history")
+
+
+class GardeWeightHistory(Base, TimestampMixin):
+    """Pondération de garde en dixièmes, historisée avec dates d'effet.
+
+    Distincte de la quotité de temps de travail (QuotiteHistory) : c'est la
+    pondération propre au calcul des gardes. Aucune formule institutionnelle
+    n'est appliquée (OPEN_QUESTIONS.md Q-01) : c'est une donnée datée.
+    """
+
+    __tablename__ = "garde_weight_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("professional_profiles.id"), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    weight_tenths: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    profile: Mapped[ProfessionalProfile] = relationship(back_populates="garde_weight_history")
 
 
 class Eligibility(Base, TimestampMixin):
