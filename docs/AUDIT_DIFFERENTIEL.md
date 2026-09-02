@@ -32,7 +32,20 @@ Marqueur institutionnel : toute valeur non validée est administrable et étique
 | P0.6 | Échec démarrage en production si .invalid / mot de passe demo / secret faible / seed demo | Aucun contrôle | Contrôle de démarrage `assert_production_safe()` : refuse comptes .invalid, secret par défaut, marqueur demo | test : startup prod échoue sur base demo | à faire |
 | P0.7 | Ne jamais transformer la base actuelle en production ; app+base distinctes par migrations | Base demo unique | Documenter et imposer : instance demo reste `GARDES_ENVIRONMENT=demonstration` ; prod = nouvelle app+base | doc + garde-fou P0.6 | à faire |
 | P0.8 | Neutraliser le seed drop_all() hors demo | `seed_demo.py:814 drop_all()` inconditionnel | Verrou : refuse si env != demonstration OU base non marquée `is_demo` ; marqueur explicite requis | test : seed refuse sur staging/prod | à faire |
-| P0.9 | Migrations Alembic versionnées en release + retour arrière testé | Release fait déjà `alembic upgrade head` ; startup create_all seulement en SQLite | Conserver ; ajouter downgrade testé sur base fictive (up/down/up) | test : downgrade/upgrade rejouable | à faire |
+| P0.9 | Migrations Alembic versionnées en release + retour arrière testé | Release fait déjà `alembic upgrade head` ; startup create_all seulement en SQLite | Conserver ; ajouter downgrade testé sur base fictive (up/down/up) | test : downgrade/upgrade rejouable | partiel (release OK ; downgrade à tester) |
+
+### État P0 — PROUVÉ EN DIRECT (déploiement `p5-transport`, 02/09/2026)
+
+Instance déployée repassée en `GARDES_ENVIRONMENT=staging` (fictif, durci, seedable),
+secret fort régénéré. `production` reste réservé à une future app+base distinctes.
+
+- HTTP `/connexion` -> **308** vers `https://` (via X-Forwarded-Proto). Prouvé.
+- HTTPS : en-têtes **HSTS**, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`. Prouvé.
+- Cookie de session : `secure; httponly; samesite=lax`. Prouvé.
+- `Cache-Control: no-store, private` sur `/api`. Prouvé.
+- Swagger `/api/docs` -> **404** hors démonstration. Prouvé.
+- Garde-fous démarrage (refus secret faible en déployé, refus comptes `.invalid` en production) + verrous seed/reset (interdits en production) : 12 tests verts, suite complète verte.
+- Reste P0.9 : tester explicitement le downgrade Alembic (up/down/up) sur base fictive.
 
 ---
 
