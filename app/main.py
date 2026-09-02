@@ -16,12 +16,15 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .config import settings
 from .db import create_all
+from .services import environment as envsvc
 from .web.routers import api, ui
 
 BASE_DIR = Path(__file__).resolve().parent
 
 
 def create_app() -> FastAPI:
+    demo = envsvc.is_demonstration()
+    deployed = envsvc.is_deployed()
     app = FastAPI(
         title=settings.app_name,
         description=(
@@ -30,12 +33,39 @@ def create_app() -> FastAPI:
             "Ni outil institutionnel, ni logiciel de production."
         ),
         version="0.1.0",
-        docs_url="/api/docs",
-        openapi_url="/api/openapi.json",
+        # Swagger/OpenAPI public uniquement en démonstration.
+        docs_url="/api/docs" if demo else None,
+        redoc_url="/api/redoc" if demo else None,
+        openapi_url="/api/openapi.json" if demo else None,
     )
+    # Cookie de session Secure dès qu'on est derrière un proxy TLS (staging/prod).
     app.add_middleware(
-        SessionMiddleware, secret_key=settings.secret_key, same_site="lax", https_only=False
+        SessionMiddleware,
+        secret_key=settings.secret_key,
+        same_site="lax",
+        https_only=deployed,
     )
+
+    # Transport : redirection HTTP -> HTTPS (via X-Forwarded-Proto derrière Scalingo)
+    # et en-têtes de sécurité. Défini après SessionMiddleware pour être le plus externe.
+    @app.middleware("http")
+    async def _transport_security(request: Request, call_next):
+        proto = request.headers.get("x-forwarded-proto")
+        if deployed and proto == "http":
+            https_url = request.url.replace(scheme="https")
+            return RedirectResponse(str(https_url), status_code=308)
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        if deployed or proto == "https":
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+            )
+        if request.url.path.startswith("/api/") or request.cookies.get("session"):
+            response.headers.setdefault("Cache-Control", "no-store, private")
+        return response
+
     app.mount(
         "/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), name="static"
     )
@@ -59,6 +89,9 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def _startup() -> None:  # pragma: no cover - initialisation
+        # Garde-fou : refuse de démarrer en staging/production avec un secret faible
+        # ou des artefacts de démonstration (comptes .invalid) en production.
+        envsvc.assert_startup_safe()
         # En démonstration SQLite, on crée le schéma directement. Sur une base
         # gérée (PostgreSQL), le schéma est géré par les migrations Alembic
         # (exécutées une seule fois), afin d'éviter toute course entre workers

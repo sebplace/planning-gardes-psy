@@ -14,8 +14,15 @@ from app.db import engine
 
 
 def main() -> None:
+    from app.services import environment as envsvc
+
     if settings.database_url.startswith("sqlite"):
         raise SystemExit("Refus : ce script ne s'exécute que sur une base PostgreSQL.")
+    # Verrou : réinitialisation destructive interdite en production.
+    if envsvc.is_production():
+        raise SystemExit(
+            "Refus : la réinitialisation de schéma est interdite en production."
+        )
     with engine.begin() as conn:
         conn.execute(text("DROP SCHEMA public CASCADE"))
         conn.execute(text("CREATE SCHEMA public"))

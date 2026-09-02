@@ -810,6 +810,12 @@ def demo_swaps(session, version, admin: User) -> None:
 
 
 def main() -> None:
+    from app.services import environment as envsvc
+
+    # Verrou absolu : le seed destructif (drop_all) n'est autorisé qu'en
+    # environnement 'demonstration' et jamais sur une base contenant des comptes
+    # non fictifs.
+    envsvc.assert_destructive_seed_allowed()
     Clock.reset()
     drop_all()
     create_all()
