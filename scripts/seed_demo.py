@@ -419,15 +419,21 @@ def demo_campaign(session, quarter: Quarter, people: dict, admin: User) -> Campa
     print(f"  rappel J-14 envoyé à {sent} personne(s) non finalisée(s)")
 
     non_repondant = people["seniors"][6]  # SEN-07 ne répondra jamais
+    assistant_ids = {a.id for a in people["assistants"]}
     rng = random.Random(20260901)
     for submission in campaign.submissions:
         if submission.profile_id == non_repondant.id:
             continue
+        # Les assistants ne déclarent que vert ou rouge (jamais orange).
+        assistant = submission.profile_id in assistant_ids
         for occurrence in occurrences:
             draw = rng.random()
-            color = Color.ROUGE if draw < 0.15 else (
-                Color.ORANGE if draw < 0.35 else Color.VERT
-            )
+            if assistant:
+                color = Color.ROUGE if draw < 0.15 else Color.VERT
+            else:
+                color = Color.ROUGE if draw < 0.15 else (
+                    Color.ORANGE if draw < 0.35 else Color.VERT
+                )
             campaign_service.set_availability(session, submission, occurrence, color)
         # Garantit la couverture d'au moins un membre de chaque paire applicable.
         for occurrence_ids in pairs_occurrences:
