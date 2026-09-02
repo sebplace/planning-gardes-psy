@@ -59,7 +59,12 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def _startup() -> None:  # pragma: no cover - initialisation
-        create_all()
+        # En démonstration SQLite, on crée le schéma directement. Sur une base
+        # gérée (PostgreSQL), le schéma est géré par les migrations Alembic
+        # (exécutées une seule fois), afin d'éviter toute course entre workers
+        # ou conteneurs lors de la création des types enum.
+        if settings.database_url.startswith("sqlite"):
+            create_all()
 
     return app
 
