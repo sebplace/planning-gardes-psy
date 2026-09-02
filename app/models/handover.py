@@ -152,7 +152,7 @@ class Draw(Base, TimestampMixin):
     list_hash: Mapped[str] = mapped_column(String(80), nullable=False)
     seed_commitment: Mapped[str] = mapped_column(String(80), nullable=False)
     server_seed: Mapped[str] = mapped_column(String(80), nullable=False)
-    algorithm: Mapped[str] = mapped_column(String(120), nullable=False)
+    algorithm: Mapped[str] = mapped_column(Text, nullable=False)
     candidate_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     excluded_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     winner_candidacy_id: Mapped[int | None] = mapped_column(

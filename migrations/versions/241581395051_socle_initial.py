@@ -625,7 +625,7 @@ def upgrade() -> None:
     sa.Column('list_hash', sa.String(length=80), nullable=False),
     sa.Column('seed_commitment', sa.String(length=80), nullable=False),
     sa.Column('server_seed', sa.String(length=80), nullable=False),
-    sa.Column('algorithm', sa.String(length=120), nullable=False),
+    sa.Column('algorithm', sa.Text(), nullable=False),
     sa.Column('candidate_ids_json', sa.Text(), nullable=False),
     sa.Column('excluded_json', sa.Text(), nullable=False),
     sa.Column('winner_candidacy_id', sa.Integer(), nullable=True),
