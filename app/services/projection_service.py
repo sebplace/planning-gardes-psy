@@ -76,6 +76,11 @@ def params_from_dict(data: dict) -> ScenarioParams:
             end_date=date.fromisoformat(assistants["end_date"])
             if assistants.get("end_date")
             else None,
+            monthly_cap=assistants.get("monthly_cap"),
+            months=float(assistants.get("months", 12.0)),
+            monthly_cap_is_institutional=bool(
+                assistants.get("monthly_cap_is_institutional", False)
+            ),
         ),
         seniors=SeniorGroup(
             quotite_tenths=tuple(int(x) for x in seniors["quotite_tenths"]),
@@ -206,6 +211,103 @@ def _structural_payload(structural) -> dict:
     payload["identite_arithmetique"] = structural.arithmetic_identity_holds
     payload["avertissement"] = DEMO_LABEL
     return payload
+
+
+# --------------------------------------------------------------------------- #
+# Scénarios de référence demandés par le client (03/09/2026)
+# --------------------------------------------------------------------------- #
+
+ASSISTANTS_DEBUT = date(2026, 10, 19)
+ASSISTANTS_FIN = date(2027, 10, 3)  # inclus
+JOURS_MOYENS_PAR_MOIS = 30.4375
+
+#: Trois comparaisons explicitement demandées : (quota global, plafond mensuel).
+COMPARAISONS_ASSISTANTS = (
+    (57.0, 6.0, "quota 57 avec plafond mensuel 6"),
+    (68.0, 7.0, "quota 68 avec plafond mensuel 7"),
+    (68.0, 6.0, "contrainte : quota 68 avec plafond mensuel 6"),
+)
+
+
+def periode_assistants_en_mois(
+    debut: date = ASSISTANTS_DEBUT, fin: date = ASSISTANTS_FIN
+) -> float:
+    """Durée de la période assistante en mois, bornes incluses.
+
+    Calculée depuis les dates réelles, jamais codée en dur.
+    """
+    jours = (fin - debut).days + 1
+    return jours / JOURS_MOYENS_PAR_MOIS
+
+
+def scenarios_assistants_reference(
+    categories: tuple[CategoryVolume, ...],
+    seniors: SeniorGroup,
+    nb_assistants: int = 3,
+    debut: date = ASSISTANTS_DEBUT,
+    fin: date = ASSISTANTS_FIN,
+) -> list[ScenarioParams]:
+    """Construit les trois scénarios de comparaison demandés par le client.
+
+    Le quota global et le plafond mensuel restent **deux paramètres distincts** :
+    le premier est une cible sur toute la période, le second une borne mensuelle.
+    Les deux sont des hypothèses de simulation, jamais des règles institutionnelles.
+    """
+    mois = periode_assistants_en_mois(debut, fin)
+    scenarios: list[ScenarioParams] = []
+    for quota, plafond, libelle in COMPARAISONS_ASSISTANTS:
+        scenarios.append(
+            ScenarioParams(
+                name=libelle,
+                description=(
+                    f"{nb_assistants} assistants du {debut.isoformat()} au "
+                    f"{fin.isoformat()} inclus, soit {mois:.2f} mois. "
+                    f"Quota global {quota:g} garde(s) par assistant, plafond mensuel "
+                    f"{plafond:g}. Hypothèse de simulation : le plafond n'a pas été "
+                    "chiffré institutionnellement et ne devient jamais une règle."
+                ),
+                categories=categories,
+                assistants=AssistantGroup(
+                    count=nb_assistants,
+                    guards_per_assistant=quota,
+                    start_date=debut,
+                    end_date=fin,
+                    monthly_cap=plafond,
+                    months=mois,
+                    monthly_cap_is_institutional=False,
+                ),
+                seniors=seniors,
+            )
+        )
+    return scenarios
+
+
+def comparer_scenarios_assistants(
+    categories: tuple[CategoryVolume, ...],
+    seniors: SeniorGroup,
+    nb_assistants: int = 3,
+) -> list[dict]:
+    """Calcule les trois projections de référence, sans rien écrire en base."""
+    sorties = []
+    for params in scenarios_assistants_reference(categories, seniors, nb_assistants):
+        structural = project_structural(params)
+        sorties.append(
+            {
+                "scenario": params.name,
+                "quota_global_par_assistant": params.assistants.guards_per_assistant,
+                "plafond_mensuel": params.assistants.monthly_cap,
+                "mois": round(params.assistants.months, 3),
+                "capacite_quota": structural.assistant_quota_capacity,
+                "capacite_plafond": structural.assistant_cap_capacity,
+                "saturation": structural.assistant_cap_saturation,
+                "contrainte_active": structural.assistant_binding_constraint,
+                "premieres_lignes_utilisees": structural.assistant_used,
+                "verdict": structural.verdict,
+                "alertes": structural.warnings,
+                "avertissement": DEMO_LABEL,
+            }
+        )
+    return sorties
 
 
 def compare(session: Session, scenario_ids: list[int]) -> list[dict]:

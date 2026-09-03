@@ -43,6 +43,7 @@ from app.models import (  # noqa: E402
     Exemption,
     GardeOccurrence,
     GardeType,
+    GardeWeightHistory,
     HandoverState,
     HolidayRequirement,
     Line,
@@ -58,11 +59,14 @@ from app.models import (  # noqa: E402
     WaveKind,
     Year,
 )
+from app.models import permissions  # noqa: E402
 from app.services import (  # noqa: E402
     audit_service,
     campaign_service,
     catalog_service,
+    counters_service,
     handover_service,
+    permission_service,
     planning_service,
     projection_service,
     quota_service,
@@ -71,11 +75,16 @@ from app.services import (  # noqa: E402
 )
 from app.services.clock import Clock  # noqa: E402
 
+#: Quinze seniors fictifs. Effectif confirmé par le client le 03/09/2026.
 SENIOR_NAMES = [
     "Alpha", "Bêta", "Gamma", "Delta", "Epsilon", "Zêta", "Êta",
-    "Thêta", "Iota", "Kappa", "Lambda", "Mu", "Nu", "Xi",
+    "Thêta", "Iota", "Kappa", "Lambda", "Mu", "Nu", "Xi", "Omicron",
 ]
-ASSISTANT_NAMES = ["Omicron", "Pi", "Rhô", "Sigma", "Tau", "Upsilon"]
+#: Trois assistants fictifs, première garde 19/10/2026, dernière 03/10/2027 incluse.
+ASSISTANT_NAMES = ["Pi", "Rhô", "Sigma"]
+
+ASSISTANTS_DEBUT = date(2026, 10, 19)
+ASSISTANTS_FIN = date(2027, 10, 3)  # inclus
 
 # Jours fériés fictifs positionnés sur 2027 — administrables, jamais figés en dur.
 HOLIDAYS_2027 = {
@@ -84,7 +93,20 @@ HOLIDAYS_2027 = {
     date(2027, 11, 11), date(2027, 12, 25),
 }
 
-QUOTITES = [10, 10, 10, 10, 10, 10, 9, 9, 8, 8, 8, 6, 5, 5]
+#: Quotité de temps de travail, en dixièmes. Donnée distincte de la pondération.
+QUOTITES = [10, 10, 10, 10, 10, 10, 9, 9, 8, 8, 8, 6, 5, 5, 7]
+
+#: Pondération **de garde**, en dixièmes, transmise par le client au 01/10/2026.
+#: Somme attendue : 84/10. Les deux zéros correspondent à des seniors qui
+#: n'assurent aucune garde sur la période.
+PONDERATIONS_GARDE = [7, 6, 7, 8, 8, 0, 7, 8, 6, 0, 3, 6, 6, 7, 5]
+PONDERATIONS_EFFET = date(2026, 10, 1)
+
+#: Campagne du premier trimestre, dates transmises par le client.
+CAMPAGNE_T1_OUVERTURE = datetime(2026, 11, 1, 8, 0)
+CAMPAGNE_T1_RAPPEL = datetime(2026, 11, 15, 8, 0)
+CAMPAGNE_T1_CLOTURE = datetime(2026, 12, 1, 23, 59)
+CAMPAGNE_T1_PUBLICATION = datetime(2026, 12, 7, 12, 0)
 
 
 def banner(text: str) -> None:
@@ -125,6 +147,18 @@ def seed_people(session) -> dict:
                 note="Donnée enregistrée ; aucune formule institutionnelle appliquée.",
             )
         )
+        # Pondération **de garde**, distincte de la quotité, datée du 01/10/2026.
+        session.add(
+            GardeWeightHistory(
+                profile_id=profile.id,
+                start_date=PONDERATIONS_EFFET,
+                weight_tenths=PONDERATIONS_GARDE[index - 1],
+                note=(
+                    "Pondération de garde transmise par le client, en dixièmes. "
+                    "Aucune formule n'est appliquée : c'est une donnée datée."
+                ),
+            )
+        )
         people["seniors"].append(profile)
 
     # SEN-13 n'est pas éligible à la première ligne (éligibilité métier, pas un quota).
@@ -150,16 +184,27 @@ def seed_people(session) -> dict:
         )
         session.add(profile)
         session.flush()
-        # Assistant temporaire : période d'activité datée, expiration dérivée.
-        end = date(2027, 12, 31) if index < 6 else date(2026, 12, 31)
+        # Période d'activité exacte transmise par le client : première garde le
+        # 19/10/2026, dernière le 03/10/2027 incluse.
         session.add(
             ActivityPeriod(
-                profile_id=profile.id, start_date=date(2026, 9, 1), end_date=end,
+                profile_id=profile.id,
+                start_date=ASSISTANTS_DEBUT,
+                end_date=ASSISTANTS_FIN,
                 reason="Contrat d'assistanat fictif",
             )
         )
         session.add(
-            QuotiteHistory(profile_id=profile.id, start_date=date(2026, 9, 1), tenths=10)
+            QuotiteHistory(
+                profile_id=profile.id, start_date=ASSISTANTS_DEBUT, tenths=10
+            )
+        )
+        # Les assistants n'assurent que la première ligne.
+        session.add(
+            Eligibility(
+                profile_id=profile.id, line=Line.L2, eligible=False,
+                comment="Un assistant n'est jamais en deuxième ligne.",
+            )
         )
         people["assistants"].append(profile)
 
@@ -178,6 +223,36 @@ def seed_people(session) -> dict:
     people["admins"].append(cumul)
 
     session.flush()
+
+    # Six permissions distinctes, déléguées à des médecins non administrateurs.
+    # Elles sont datées et journalisées, et n'ouvrent aucun autre droit.
+    delegations = [
+        (people["seniors"][1], permissions.RESP_L1, "Responsable de la première ligne"),
+        (people["seniors"][2], permissions.RESP_L2, "Responsable de la deuxième ligne"),
+        (people["seniors"][3], permissions.CHEF_SERVICE, "Chef de service"),
+        (people["seniors"][4], permissions.GESTION_COMPTES, "Gestion des comptes"),
+        (people["seniors"][5], permissions.PUBLICATION, "Publication du planning"),
+        (
+            people["seniors"][6],
+            permissions.CONSULTATION_AUDIT,
+            "Consultation du journal",
+        ),
+    ]
+    for profil, code, libelle in delegations:
+        permission_service.grant(
+            session,
+            session.get(User, profil.user_id),
+            code,
+            admin,
+            start_date=PONDERATIONS_EFFET,
+            comment=f"Délégation fictive : {libelle}.",
+        )
+    session.flush()
+    print(
+        f"  {len(delegations)} permissions distinctes déléguées à des médecins "
+        "non administrateurs (datées et journalisées)"
+    )
+
     print(
         f"  {len(people['seniors'])} seniors, {len(people['assistants'])} assistants, "
         f"{len(people['admins'])} administrateurs (dont 1 cumul médecin/administrateur)"
@@ -309,6 +384,21 @@ def seed_quotas(session, year: Year, quarter: Quarter, people: dict, admin: User
     session.flush()
     print("  quotas manuels saisis, 1 exemption totale et 1 exemption partielle")
 
+    # Plafond mensuel : le client ne l'a pas chiffré (03/09/2026). On enregistre
+    # donc une ligne **vide** pour chaque statut, afin que l'absence soit visible
+    # et alertée, sans jamais inventer une valeur.
+    for status in (Status.SENIOR, Status.ASSISTANT):
+        quota_service.set_monthly_cap(
+            session, year, admin, status=status, max_per_month=None,
+            comment=(
+                "Valeur institutionnelle attendue. Aucune valeur n'a été devinée : "
+                "les 5, 6 ou 7 utilisés en projection restent des hypothèses de "
+                "simulation."
+            ),
+        )
+    for alerte in quota_service.monthly_cap_alerts(session, year):
+        print(f"    alerte plafond mensuel : {alerte}")
+
 
 # --------------------------------------------------------------------------- #
 # 2. Projections
@@ -329,15 +419,14 @@ def demo_projections(session, admin: User, quarter: Quarter) -> None:
         labels[category.code] = category.label
 
     params = ScenarioParams(
-        name="Trimestre T1 2027 — 6 assistants",
+        name="Trimestre T1 2027 — 3 assistants",
         description="Scénario de référence, hypothèses de démonstration.",
         categories=tuple(
             CategoryVolume(code, labels[code], n, 0.66) for code, n in sorted(counts.items())
         ),
-        assistants=AssistantGroup(count=6, guards_per_assistant=10),
+        assistants=AssistantGroup(count=3, guards_per_assistant=15),
         seniors=SeniorGroup(
-            quotite_tenths=tuple(QUOTITES),
-            exemption_ratios=(0.0,) * 11 + (0.25, 0.0, 0.3),
+            quotite_tenths=tuple(PONDERATIONS_GARDE),
             max_total_per_full_time=14.0,
         ),
         senior_load_threshold=12.0,
@@ -365,10 +454,10 @@ def demo_projections(session, admin: User, quarter: Quarter) -> None:
     )
 
     tight = ScenarioParams(
-        name="Trimestre T1 2027 — 2 assistants seulement",
+        name="Trimestre T1 2027 — 1 assistant seulement",
         description="Variante tendue, sans conversion du mode B en mode A.",
         categories=params.categories,
-        assistants=AssistantGroup(count=2, guards_per_assistant=6),
+        assistants=AssistantGroup(count=1, guards_per_assistant=6),
         seniors=params.seniors,
         convert_uncovered_b_to_a=False,
         senior_load_threshold=12.0,
@@ -383,6 +472,22 @@ def demo_projections(session, admin: User, quarter: Quarter) -> None:
     for reason in tight_structural["reasons"]:
         print(f"    raison : {reason}")
 
+    # Les trois comparaisons demandées par le client : quota global et plafond
+    # mensuel restent deux paramètres distincts.
+    print("  comparaison quota global / plafond mensuel (hypothèses de simulation) :")
+    for ligne in projection_service.comparer_scenarios_assistants(
+        params.categories, params.seniors, nb_assistants=3
+    ):
+        print(
+            f"    {ligne['scenario']} → capacité quota {ligne['capacite_quota']:.0f}, "
+            f"capacité plafond {ligne['capacite_plafond']:.0f}, "
+            f"saturation {ligne['saturation'] * 100:.1f} %, "
+            f"contrainte active : {ligne['contrainte_active']}"
+        )
+        for alerte in ligne["alertes"]:
+            if "marge de manœuvre" in alerte:
+                print(f"      {alerte}")
+
     try:
         projection_service.promote_to_configuration(session, tight_scenario, admin, confirmed=False)
     except projection_service.ProjectionError as exc:
@@ -395,17 +500,28 @@ def demo_projections(session, admin: User, quarter: Quarter) -> None:
 
 
 def demo_campaign(session, quarter: Quarter, people: dict, admin: User) -> Campaign:
-    opens_at = datetime(2026, 11, 27, 8, 0)
-    deadline = datetime(2026, 12, 27, 12, 0)
+    """Campagne du premier trimestre, aux dates transmises par le client.
+
+    Ouverture le 01/11, rappel le 15/11, clôture le 01/12, publication le 07/12.
+    """
+    opens_at = CAMPAGNE_T1_OUVERTURE
+    deadline = CAMPAGNE_T1_CLOTURE
     Clock.freeze(opens_at)
 
+    # Décalage du rappel unique demandé : 16 jours après l'ouverture, soit le 15/11.
+    rappel_offset = (deadline.date() - CAMPAGNE_T1_RAPPEL.date()).days
     campaign = campaign_service.create_campaign(
         session, quarter, opens_at=opens_at, deadline_at=deadline, admin=admin,
         grace_period_hours=48, requirement=HolidayRequirement.VERT_ORANGE,
+        reminder_offsets_days=str(rappel_offset),
     )
     campaign_service.open_campaign(session, campaign, admin)
-    print(f"  campagne ouverte le 27/11/2026, échéance le 27/12/2026 "
-          f"({len(campaign.submissions)} personnes)")
+    print(
+        f"  campagne T1 ouverte le {opens_at:%d/%m/%Y}, rappel le "
+        f"{CAMPAGNE_T1_RAPPEL:%d/%m/%Y}, clôture le {deadline:%d/%m/%Y}, "
+        f"publication visée le {CAMPAGNE_T1_PUBLICATION:%d/%m/%Y} "
+        f"({len(campaign.submissions)} personnes)"
+    )
 
     occurrences = list(
         session.execute(
@@ -414,9 +530,9 @@ def demo_campaign(session, quarter: Quarter, people: dict, admin: User) -> Campa
     )
     pairs_occurrences = _holiday_pair_occurrences(session, campaign)
 
-    Clock.freeze(datetime(2026, 12, 13, 13, 0))
+    Clock.freeze(CAMPAGNE_T1_RAPPEL)
     sent = campaign_service.send_due_reminders(session, campaign)
-    print(f"  rappel J-14 envoyé à {sent} personne(s) non finalisée(s)")
+    print(f"  rappel du 15/11 envoyé à {sent} personne(s) non finalisée(s)")
 
     non_repondant = people["seniors"][6]  # SEN-07 ne répondra jamais
     assistant_ids = {a.id for a in people["assistants"]}
@@ -435,27 +551,24 @@ def demo_campaign(session, quarter: Quarter, people: dict, admin: User) -> Campa
                     Color.ORANGE if draw < 0.35 else Color.VERT
                 )
             campaign_service.set_availability(session, submission, occurrence, color)
-        # Garantit la couverture d'au moins un membre de chaque paire applicable.
-        for occurrence_ids in pairs_occurrences:
-            if occurrence_ids:
-                occurrence = session.get(GardeOccurrence, sorted(occurrence_ids)[0])
-                campaign_service.set_availability(
-                    session, submission, occurrence, Color.VERT
-                )
+        # L'obligation liée aux paires de jours fériés ne concerne que les seniors :
+        # elle n'est pas étendue aux assistants (arbitrage du client du 03/09/2026).
+        if not assistant:
+            for occurrence_ids in pairs_occurrences:
+                if occurrence_ids:
+                    occurrence = session.get(GardeOccurrence, sorted(occurrence_ids)[0])
+                    campaign_service.set_availability(
+                        session, submission, occurrence, Color.VERT
+                    )
         campaign_service.validate_submission(session, submission)
     print(f"  {len(campaign.submissions) - 1} réponses validées · 1 non-répondant "
           f"({non_repondant.code})")
+    print("  obligation « paires de jours fériés » appliquée aux seniors uniquement")
 
-    # Les rappels cessent après validation.
-    Clock.freeze(datetime(2026, 12, 20, 13, 0))
-    sent = campaign_service.send_due_reminders(session, campaign)
-    Clock.freeze(datetime(2026, 12, 25, 13, 0))
-    sent += campaign_service.send_due_reminders(session, campaign)
-    print(f"  rappels J-7 et J-2 : {sent} envoi(s), uniquement au non-répondant")
-
-    Clock.freeze(datetime(2026, 12, 27, 12, 30))
+    Clock.freeze(deadline + timedelta(minutes=30))
     campaign_service.close_campaign(session, campaign, admin)
-    print(f"  échéance atteinte → état {campaign.state.value} (génération bloquée)")
+    print(f"  clôture du 01/12 atteinte → état {campaign.state.value} "
+          "(génération bloquée)")
 
     blockers = planning_service.generation_blockers(session, quarter)
     for blocker in blockers:
@@ -464,7 +577,7 @@ def demo_campaign(session, quarter: Quarter, people: dict, admin: User) -> Campa
     ok, reasons = campaign_service.can_apply_default_availability(campaign)
     print(f"  conversion immédiate possible ? {ok} — {reasons}")
 
-    Clock.freeze(datetime(2026, 12, 29, 13, 0))
+    Clock.freeze(CAMPAGNE_T1_CLOTURE + timedelta(hours=50))
     converted = campaign_service.apply_default_availability(session, campaign, admin)
     total = sum(converted.values())
     print(
@@ -502,7 +615,7 @@ def _holiday_pair_occurrences(session, campaign: Campaign) -> list[set[int]]:
 def demo_planning(session, quarter: Quarter, admin: User):
     import json
 
-    Clock.freeze(datetime(2026, 12, 29, 14, 0))
+    Clock.freeze(CAMPAGNE_T1_CLOTURE + timedelta(hours=51))
     run = planning_service.run_engine(
         session, quarter, admin=admin, seed=20260901, variants=3, min_diversity=0.08
     )
@@ -534,10 +647,10 @@ def demo_planning(session, quarter: Quarter, admin: User):
 
     planning_service.set_lock(session, version, version.assignments[0].post_id, True, admin)
     planning_service.validate_version(session, version, admin)
-    Clock.freeze(datetime(2026, 12, 30, 9, 0))
+    Clock.freeze(CAMPAGNE_T1_PUBLICATION)
     planning_service.publish_version(session, version, admin)
-    print(f"  planning publié : version {version.version_no}, "
-          f"{len(version.assignments)} affectations")
+    print(f"  planning publié le {CAMPAGNE_T1_PUBLICATION:%d/%m/%Y} : "
+          f"version {version.version_no}, {len(version.assignments)} affectations")
     return version
 
 
@@ -593,9 +706,11 @@ def demo_handovers(session, version, admin: User) -> None:
 
     candidates = _future_assignments(session, version)
 
-    # ---- Reprise verte avec plusieurs volontaires -------------------------- #
+    # ---- Reprise L1 : verts déclarés uniquement ---------------------------- #
     played = 0
     for assignment, post, occurrence in candidates:
+        if post.line is not Line.L1:
+            continue
         requester = session.get(ProfessionalProfile, assignment.profile_id)
         try:
             request = handover_service.request_handover(
@@ -624,8 +739,9 @@ def demo_handovers(session, version, admin: User) -> None:
             else:
                 handover_service.decline(session, wave, profile)
         print(
-            f"  reprise verte : garde du {occurrence.local_date} ({post.line.value}) · "
-            f"{wave.solicited_count} personnes sollicitées anonymement · 3 candidatures"
+            f"  reprise L1 : garde du {occurrence.local_date} ({post.line.value}) · "
+            f"{wave.solicited_count} personne(s) explicitement verte(s) sollicitée(s) "
+            "anonymement · 3 candidatures"
         )
         handover_service.advance(session, request)
         session.refresh(request)
@@ -648,61 +764,63 @@ def demo_handovers(session, version, admin: User) -> None:
         played = 1
         break
     if not played:
-        print("  (aucune garde éligible pour la démonstration de reprise verte)")
+        print("  (aucune garde éligible pour la démonstration de reprise L1)")
 
-    # ---- Reprise orange : tout le monde refuse en vague verte --------------- #
+    # ---- Reprise L2 : collecte unique, priorité au vert au tirage ---------- #
     for assignment, post, occurrence in candidates:
-        if assignment.busy_operation is not None:
+        session.refresh(assignment)
+        if assignment.busy_operation is not None or post.line is not Line.L2:
             continue
         requester = session.get(ProfessionalProfile, assignment.profile_id)
         try:
             request = handover_service.request_handover(session, assignment, requester)
         except handover_service.HandoverError:
             continue
-        green = handover_service.open_wave(session, request, WaveKind.VERTE)
-        for solicitation in session.execute(
-            select(handover_service.WaveSolicitation).where(
-                handover_service.WaveSolicitation.wave_id == green.id
-            )
-        ).scalars():
-            handover_service.decline(
-                session, green, session.get(ProfessionalProfile, solicitation.profile_id)
-            )
-        handover_service.advance(session, request)
-        session.refresh(request)
-        orange = next((w for w in request.waves if w.kind is WaveKind.ORANGE), None)
-        if orange is None or orange.solicited_count == 0:
+        wave = handover_service.open_wave(session, request, WaveKind.UNIQUE)
+        if wave.solicited_count < 2:
             handover_service.cancel_request(session, request, admin)
             continue
-        print(
-            f"  reprise orange : aucune candidature verte → seconde vague ouverte à "
-            f"{orange.solicited_count} personne(s) orange"
-        )
-        orange_solicited = sorted(
+        solicites = sorted(
             s.profile_id
             for s in session.execute(
                 select(handover_service.WaveSolicitation).where(
-                    handover_service.WaveSolicitation.wave_id == orange.id
+                    handover_service.WaveSolicitation.wave_id == wave.id
                 )
             ).scalars()
         )
-        for index, profile_id in enumerate(orange_solicited):
-            profile = session.get(ProfessionalProfile, profile_id)
-            if index < 2:
-                handover_service.submit_candidacy(session, orange, profile)
-            else:
-                handover_service.decline(session, orange, profile)
+        couleurs = {
+            pid: handover_service.engine_bridge.current_color(
+                session, pid, occurrence.id, post.line
+            )
+            for pid in solicites
+        }
+        verts = [p for p, c in couleurs.items() if c is Color.VERT]
+        oranges = [p for p, c in couleurs.items() if c is Color.ORANGE]
+        print(
+            f"  reprise L2 : collecte unique auprès de {wave.solicited_count} "
+            f"personne(s) — {len(verts)} vert(s) et {len(oranges)} orange, "
+            "sollicités en même temps"
+        )
+        for profile_id in solicites:
+            handover_service.submit_candidacy(
+                session, wave, session.get(ProfessionalProfile, profile_id)
+            )
         handover_service.advance(session, request)
         session.refresh(request)
         draw = session.execute(
-            select(handover_service.Draw).where(handover_service.Draw.wave_id == orange.id)
+            select(handover_service.Draw).where(handover_service.Draw.wave_id == wave.id)
         ).scalar_one_or_none()
         if draw is not None:
+            preuve = json.loads(draw.proof_json)
             winner = session.get(ProfessionalProfile, draw.winner_profile_id)
-            print(f"    tirage orange → {winner.code} · état {request.state.value}")
+            print(
+                f"    palier retenu : {preuve['palier_prioritaire']} · "
+                f"tirage entre {len(preuve['liste_tirable'])} volontaire(s) → "
+                f"{winner.code} · état {request.state.value}"
+            )
         break
 
-    # ---- Reprise échouée : refus dans les deux vagues ----------------------- #
+    # ---- Reprise échouée : tout le monde refuse la collecte unique --------- #
     for assignment, post, occurrence in candidates:
         session.refresh(assignment)
         if assignment.busy_operation is not None:
@@ -712,14 +830,10 @@ def demo_handovers(session, version, admin: User) -> None:
             request = handover_service.request_handover(session, assignment, requester)
         except handover_service.HandoverError:
             continue
-        for kind in (WaveKind.VERTE, WaveKind.ORANGE):
-            wave = next((w for w in request.waves if w.kind is kind), None)
-            if wave is None:
-                handover_service.advance(session, request)
-                session.refresh(request)
-                wave = next((w for w in request.waves if w.kind is kind), None)
-            if wave is None:
-                continue
+        handover_service.advance(session, request)
+        session.refresh(request)
+        wave = handover_service.current_wave(request)
+        if wave is not None:
             for solicitation in session.execute(
                 select(handover_service.WaveSolicitation).where(
                     handover_service.WaveSolicitation.wave_id == wave.id
@@ -728,13 +842,13 @@ def demo_handovers(session, version, admin: User) -> None:
                 handover_service.decline(
                     session, wave, session.get(ProfessionalProfile, solicitation.profile_id)
                 )
-            handover_service.advance(session, request)
-            session.refresh(request)
+        handover_service.run_until_settled(session, request)
+        session.refresh(request)
         if request.state is HandoverState.ESCALADE:
             print(
                 f"  reprise échouée : garde du {occurrence.local_date} · "
-                "escalade vers les administrateurs, affectation initiale maintenue "
-                f"({requester.code})"
+                "aucune seconde vague, escalade immédiate, titulaire publié "
+                f"maintenu responsable ({requester.code})"
             )
             break
 

@@ -320,7 +320,7 @@ def test_39_dispo_par_defaut_compte_pour_paire_et_vague_verte(world):
         "Disponible par défaut — non confirmé par la personne"
     )
 
-    # …et rend la personne éligible à la vague verte d'une reprise.
+    # …mais elle n'ouvre **aucune** reprise (arbitrage du client du 03/09/2026).
     Clock.freeze(datetime(2026, 12, 29, 14, 0))
     run = planning_service.run_engine(
         session, world.quarter, admin=world.admin, seed=99, variants=1
@@ -338,7 +338,9 @@ def test_39_dispo_par_defaut_compte_pour_paire_et_vague_verte(world):
     )
     titulaire = session.get(type(non_repondant), affectation.profile_id)
     demande = handover_service.request_handover(session, affectation, titulaire)
-    eligibles = handover_service.eligible_profiles(session, demande, WaveKind.VERTE)
-    assert non_repondant in eligibles, (
-        "La disponibilité par défaut ouvre la vague verte, sans être un vert déclaré."
-    )
+    for kind in (WaveKind.VERTE, WaveKind.UNIQUE):
+        eligibles = handover_service.eligible_profiles(session, demande, kind)
+        assert non_repondant not in eligibles, (
+            "Une disponibilité par défaut non confirmée est exclue de toutes les "
+            "reprises."
+        )

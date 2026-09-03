@@ -197,6 +197,7 @@ def cancel_request(
     for state in (
         HandoverState.BROUILLON,
         HandoverState.COLLECTE_VERTE,
+        HandoverState.COLLECTE_UNIQUE,
         HandoverState.COLLECTE_ORANGE,
     ):
         if _guard(session, HandoverRequest, request.id, "state", state, HandoverState.ANNULEE):
@@ -224,22 +225,40 @@ def cancel_request(
 # --------------------------------------------------------------------------- #
 
 
+#: Couleurs sollicitables par type de vague. Arbitrage du client du 03/09/2026 :
+#: une disponibilité par défaut non confirmée n'est **jamais** sollicitée en reprise.
+COULEURS_SOLLICITABLES = {
+    WaveKind.VERTE: (Color.VERT,),
+    WaveKind.UNIQUE: (Color.VERT, Color.ORANGE),
+    WaveKind.ORANGE: (Color.ORANGE,),  # héritage, plus jamais ouverte
+}
+
+
+def wave_kind_for(post: CoveragePost) -> WaveKind:
+    """Type de collecte selon la ligne.
+
+    Première ligne : uniquement les personnes explicitement vertes.
+    Deuxième ligne : une seule collecte, verts et orange ensemble, la priorité au
+    vert étant appliquée au moment du tirage et non par des vagues successives.
+    """
+    return WaveKind.VERTE if post.line is Line.L1 else WaveKind.UNIQUE
+
+
 def eligible_profiles(
     session: Session, request: HandoverRequest, kind: WaveKind
 ) -> list[ProfessionalProfile]:
     """Personnes sollicitables.
 
-    Vague verte : couleur ``VERT`` **ou** ``DISPO_DEFAUT`` (ce second statut restant
-    distinct dans les écrans, explications et journaux).
-    Vague orange : couleur ``ORANGE``.
-    Dans les deux cas, toutes les contraintes fermes sont vérifiées et le demandeur
-    est exclu de sa propre vague.
+    Seules les couleurs **explicitement déclarées** ouvrent une sollicitation.
+    ``DISPO_DEFAUT`` est exclu de toutes les reprises : une non-réponse peut servir
+    à la génération initiale, jamais à désigner un volontaire.
+
+    Dans tous les cas, les contraintes fermes sont vérifiées et le demandeur est
+    exclu de sa propre vague.
     """
     post = _post_of(request)
     occurrence = post.occurrence
-    accepted = (
-        (Color.VERT, Color.DISPO_DEFAUT) if kind is WaveKind.VERTE else (Color.ORANGE,)
-    )
+    accepted = COULEURS_SOLLICITABLES[kind]
     out: list[ProfessionalProfile] = []
     for profile in session.execute(select(ProfessionalProfile)).scalars():
         if profile.id == request.requester_profile_id:
@@ -289,7 +308,9 @@ def open_wave(session: Session, request: HandoverRequest, kind: WaveKind) -> Han
             anonymised=True,
         )
     request.state = (
-        HandoverState.COLLECTE_VERTE if kind is WaveKind.VERTE else HandoverState.COLLECTE_ORANGE
+        HandoverState.COLLECTE_VERTE
+        if kind is WaveKind.VERTE
+        else HandoverState.COLLECTE_UNIQUE
     )
     session.flush()
     audit_service.record(
@@ -436,12 +457,12 @@ def close_and_draw(session: Session, wave: HandoverWave) -> Draw | None:
     expected_state = (
         HandoverState.COLLECTE_VERTE
         if wave.kind is WaveKind.VERTE
-        else HandoverState.COLLECTE_ORANGE
+        else HandoverState.COLLECTE_UNIQUE
     )
     frozen_state = (
         HandoverState.LISTE_FIGEE_VERTE
         if wave.kind is WaveKind.VERTE
-        else HandoverState.LISTE_FIGEE_ORANGE
+        else HandoverState.LISTE_FIGEE_UNIQUE
     )
     if not _guard(
         session, HandoverRequest, request.id, "state", expected_state, frozen_state
@@ -491,12 +512,24 @@ def close_and_draw(session: Session, wave: HandoverWave) -> Draw | None:
     occurrence = post.occurrence
     valid: list[Candidacy] = []
     excluded: list[dict] = []
+    couleurs: dict[int, Color | None] = {}
     for candidacy in frozen:
         profile = candidacy.profile
         reason = None
         color = engine_bridge.current_color(session, profile.id, occurrence.id, post.line)
+        couleurs[candidacy.id] = color
         if color is Color.ROUGE:
             reason = "Rouge déclaré depuis le dépôt de la candidature : exclusion immédiate."
+        elif color is Color.DISPO_DEFAUT:
+            reason = (
+                "Disponibilité par défaut non confirmée : exclue de toutes les "
+                "reprises."
+            )
+        elif color not in COULEURS_SOLLICITABLES[wave.kind]:
+            reason = (
+                "Couleur devenue non sollicitable pour ce type de collecte depuis "
+                "le dépôt de la candidature."
+            )
         elif occurrence.start_at <= Clock.now():
             reason = "La garde a commencé avant le tirage."
         else:
@@ -524,13 +557,24 @@ def close_and_draw(session: Session, wave: HandoverWave) -> Draw | None:
         )
         return None
 
-    # 4. Tirage sur la liste figée et revalidée.
-    valid_ids = sorted(c.id for c in valid)
+    # 3bis. Priorité au vert, appliquée **au tirage** et non par vagues successives.
+    # S'il existe au moins un volontaire vert valide, le tirage ne porte que sur eux.
+    verts = [c for c in valid if couleurs.get(c.id) is Color.VERT]
+    oranges = [c for c in valid if couleurs.get(c.id) is Color.ORANGE]
+    if verts:
+        tirables = verts
+        priorite = "VERT"
+    else:
+        tirables = oranges or valid
+        priorite = "ORANGE"
+
+    # 4. Tirage sur la liste figée, revalidée et restreinte au palier prioritaire.
+    valid_ids = sorted(c.id for c in tirables)
     valid_hash = _sha(valid_ids)
     digest = hmac.new(server_seed.encode(), valid_hash.encode(), hashlib.sha256).hexdigest()
     index = int(digest[:16], 16) % len(valid_ids)
     winner_id = valid_ids[index]
-    winner = next(c for c in valid if c.id == winner_id)
+    winner = next(c for c in tirables if c.id == winner_id)
 
     draw = Draw(
         wave_id=wave.id,
@@ -547,7 +591,11 @@ def close_and_draw(session: Session, wave: HandoverWave) -> Draw | None:
         proof_json=json.dumps(
             {
                 "liste_figee": frozen_ids,
-                "liste_valide": valid_ids,
+                "liste_valide": sorted(c.id for c in valid),
+                "palier_prioritaire": priorite,
+                "liste_tirable": valid_ids,
+                "verts_valides": sorted(c.id for c in verts),
+                "orange_valides": sorted(c.id for c in oranges),
                 "empreinte_liste_figee": list_hash,
                 "empreinte_liste_valide": valid_hash,
                 "engagement_graine": seed_commitment,
@@ -557,6 +605,11 @@ def close_and_draw(session: Session, wave: HandoverWave) -> Draw | None:
                 "verification": (
                     "sha256(graine_revelee) doit égaler l'engagement ; "
                     "index = int(HMAC-SHA256(graine, empreinte_liste_valide)[0:16],16) mod n"
+                ),
+                "regle_de_priorite": (
+                    "collecte unique, mais tirage restreint aux volontaires verts "
+                    "valides ; les orange ne sont tirés qu'en l'absence totale de "
+                    "vert valide"
                 ),
                 "candidature_unique": len(valid_ids) == 1,
             },
@@ -688,7 +741,7 @@ def advance(session: Session, request: HandoverRequest) -> HandoverRequest:
     if not request.is_open:
         return request
     if request.state is HandoverState.BROUILLON:
-        open_wave(session, request, WaveKind.VERTE)
+        open_wave(session, request, wave_kind_for(_post_of(request)))
         return request
 
     wave = current_wave(request)
@@ -701,21 +754,15 @@ def advance(session: Session, request: HandoverRequest) -> HandoverRequest:
         draw = close_and_draw(session, wave)
         if draw is not None:
             return request
-        # Aucune candidature verte valide : la vague orange est ouverte.
-        if wave.kind is WaveKind.VERTE:
-            notification_service.enqueue(
-                session, "REPRISE_PASSAGE_ORANGE",
-                f"reprise:{request.id}:passage_orange", request.requester,
-                _context(session, request),
-            )
-            orange = open_wave(session, request, WaveKind.ORANGE)
-            if not orange.solicited_count:
-                escalate(session, request, ["Aucune personne orange sollicitable."])
-            return request
-        escalate(
-            session, request,
-            ["Aucune candidature valide après les vagues verte et orange."],
+        # Plus de vague orange successive : la collecte est unique (03/09/2026).
+        # Sans volontaire valide, le titulaire publié reste responsable et les
+        # responsables sont alertés.
+        motif = (
+            "Aucun volontaire vert valide en première ligne."
+            if wave.kind is WaveKind.VERTE
+            else "Aucun volontaire valide, ni vert ni orange, en deuxième ligne."
         )
+        escalate(session, request, [motif])
     return request
 
 

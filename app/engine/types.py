@@ -82,6 +82,8 @@ H_EXEMPTION = "H08_EXEMPTION_OU_QUOTA_NUL"
 H_MAX_FERME = "H08b_MAXIMUM_FERME_ATTEINT"
 H_REPOS = "H09_REGLE_DE_REPOS_FERME"
 H_DOUBLE_POSTE = "H11_DEUX_POSTES_MEME_OCCURRENCE"
+H_PLAFOND_MENSUEL = "H12_PLAFOND_MENSUEL_FERME"
+H_DUREE_CONTINUE = "H13_DUREE_CONTINUE_MAXIMALE"
 
 HARD_CONSTRAINT_LABELS: Mapping[str, str] = {
     H_ROUGE: "Indisponibilité rouge déclarée par la personne",
@@ -98,6 +100,14 @@ HARD_CONSTRAINT_LABELS: Mapping[str, str] = {
     H_MAX_FERME: "Maximum ferme de quota déjà atteint",
     H_REPOS: "Règle de repos ferme non respectée",
     H_DOUBLE_POSTE: "Déjà affectée sur un autre poste de la même occurrence",
+    H_PLAFOND_MENSUEL: (
+        "Plafond mensuel de gardes atteint (plafond chiffré, validé "
+        "institutionnellement et déclaré ferme)"
+    ),
+    H_DUREE_CONTINUE: (
+        "Durée de service continu supérieure au maximum, sans demande explicite "
+        "et datée de la personne"
+    ),
 }
 
 
@@ -213,6 +223,63 @@ class RestRuleIn:
 
 
 @dataclass(frozen=True)
+class MonthlyCapIn:
+    """Plafond mensuel de gardes.
+
+    Le client n'a **pas** chiffré ce plafond institutionnellement (03/09/2026).
+    Trois verrous cumulés sont donc exigés avant qu'il ne bloque quoi que ce soit :
+    une valeur non nulle, une validation institutionnelle explicite, et un caractère
+    déclaré ferme. Tant que l'un des trois manque, le plafond est **informatif**
+    et ne peut jamais devenir silencieusement une règle.
+    """
+
+    profile_id: int | None  # None = s'applique à tout un statut
+    status: Status | None  # None = s'applique à un profil précis
+    max_per_month: float | None = None
+    enforcement: Enforcement = Enforcement.SOUPLE
+    institutionally_validated: bool = False
+    label: str = "plafond mensuel"
+
+    @property
+    def is_enforceable(self) -> bool:
+        return (
+            self.max_per_month is not None
+            and self.max_per_month > 0
+            and self.institutionally_validated
+            and self.enforcement is Enforcement.FERME
+        )
+
+    def applies_to(self, person: PersonIn) -> bool:
+        if self.profile_id is not None:
+            return person.profile_id == self.profile_id
+        if self.status is not None:
+            return person.status is self.status
+        return False
+
+
+@dataclass(frozen=True)
+class ContinuousDutyRuleIn:
+    """Durée maximale de service **continu** planifié.
+
+    Le client interdit de dépasser 24 h d'affilée (03/09/2026), tout en autorisant
+    le week-end complet d'un assistant **sur demande explicite et datée**. Cette
+    règle porte donc les deux faces : un maximum ferme, et une dérogation qui
+    n'existe que si la personne l'a elle-même demandée.
+
+    Elle ne présume rien du travail réellement effectué sur place : elle borne
+    seulement la durée de service planifiée d'un seul tenant.
+    """
+
+    max_hours: float = 24.0
+    label: str = "durée de service continu"
+    #: (profile_id, date d'ancrage du bloc) des dérogations explicites et datées.
+    explicit_requests: frozenset[tuple[int, date]] = frozenset()
+
+    def has_request(self, profile_id: int, days: set[date]) -> bool:
+        return any((profile_id, day) in self.explicit_requests for day in days)
+
+
+@dataclass(frozen=True)
 class BusyIntervalIn:
     """Occupation connue hors du périmètre généré (garde déjà publiée ailleurs)."""
 
@@ -262,6 +329,8 @@ class EngineInput:
     quotas: list[QuotaIn] = field(default_factory=list)
     exemptions: list[ExemptionIn] = field(default_factory=list)
     rest_rules: list[RestRuleIn] = field(default_factory=list)
+    monthly_caps: list[MonthlyCapIn] = field(default_factory=list)
+    continuous_duty: ContinuousDutyRuleIn | None = None
     busy_intervals: list[BusyIntervalIn] = field(default_factory=list)
     incompatibilities: frozenset[tuple[int, int]] = frozenset()  # (profile_id, occurrence_id)
     locked: Mapping[int, int] = field(default_factory=dict)  # post_id -> profile_id
@@ -351,6 +420,27 @@ class EngineInput:
             "busy": sorted(
                 (b.profile_id, b.start_at.isoformat(), b.end_at.isoformat())
                 for b in self.busy_intervals
+            ),
+            "monthly_caps": sorted(
+                (
+                    c.profile_id if c.profile_id is not None else -1,
+                    c.status.value if c.status else "",
+                    c.max_per_month if c.max_per_month is not None else -1,
+                    c.enforcement.value,
+                    c.institutionally_validated,
+                )
+                for c in self.monthly_caps
+            ),
+            "continuous_duty": (
+                [
+                    self.continuous_duty.max_hours,
+                    sorted(
+                        (pid, day.isoformat())
+                        for pid, day in self.continuous_duty.explicit_requests
+                    ),
+                ]
+                if self.continuous_duty
+                else []
             ),
             "incompat": sorted(self.incompatibilities),
             "locked": sorted(self.locked.items()),

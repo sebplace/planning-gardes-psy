@@ -58,6 +58,23 @@ class AssistantGroup:
     present_fraction: float = 1.0  # part de la période réellement couverte
     start_date: date | None = None
     end_date: date | None = None
+    # Plafond mensuel : hypothèse de simulation tant qu'il n'est pas chiffré
+    # institutionnellement (arbitrage client du 03/09/2026). Il borne la capacité
+    # dans la projection mais ne devient jamais une règle du planning.
+    monthly_cap: float | None = None
+    months: float = 12.0
+    monthly_cap_is_institutional: bool = False
+
+    @property
+    def cap_capacity(self) -> float | None:
+        """Capacité maximale imposée par le plafond mensuel, si un plafond est posé."""
+        if self.monthly_cap is None:
+            return None
+        return self.count * self.monthly_cap * self.months * self.present_fraction
+
+    @property
+    def quota_capacity(self) -> float:
+        return self.count * self.guards_per_assistant * self.present_fraction
 
 
 @dataclass(frozen=True)
@@ -110,6 +127,11 @@ class ScenarioParams:
                 "end_date": self.assistants.end_date.isoformat()
                 if self.assistants.end_date
                 else None,
+                "monthly_cap": self.assistants.monthly_cap,
+                "months": self.assistants.months,
+                "monthly_cap_is_institutional": (
+                    self.assistants.monthly_cap_is_institutional
+                ),
             },
             "seniors": {
                 "quotite_tenths": list(self.seniors.quotite_tenths),
@@ -186,6 +208,10 @@ class StructuralProjection:
     dispersion: float
     threshold_exceeded: int
     verdict: str
+    assistant_quota_capacity: float = 0.0
+    assistant_cap_capacity: float | None = None
+    assistant_cap_saturation: float | None = None
+    assistant_binding_constraint: str = "quota global"
     reasons: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -228,6 +254,36 @@ def project_structural(params: ScenarioParams) -> StructuralProjection:
         * params.assistants.guards_per_assistant
         * params.assistants.present_fraction
     )
+    quota_capacity = params.assistants.quota_capacity
+    cap_capacity = params.assistants.cap_capacity
+    binding = "quota global"
+    saturation: float | None = None
+    if cap_capacity is not None and cap_capacity > 0:
+        saturation = quota_capacity / cap_capacity
+    if cap_capacity is not None and cap_capacity < quota_capacity - 1e-9:
+        capacity_raw = cap_capacity
+        binding = "plafond mensuel"
+        warnings.append(
+            f"Le plafond mensuel de {params.assistants.monthly_cap:g} garde(s) borne "
+            f"la capacité à {cap_capacity:.1f} première(s) ligne(s), en dessous du "
+            f"quota global de {quota_capacity:.1f}. C'est donc le plafond qui "
+            "détermine le résultat de ce scénario."
+        )
+    if saturation is not None and saturation > 0.95:
+        warnings.append(
+            f"Scénario de contrainte : le quota global occupe {saturation * 100:.1f} % "
+            f"de ce que le plafond mensuel de {params.assistants.monthly_cap:g} "
+            "autorise sur la période. La marge de manœuvre mensuelle est quasi nulle, "
+            "toute absence devient difficile à absorber."
+        )
+    if params.assistants.monthly_cap is not None and not (
+        params.assistants.monthly_cap_is_institutional
+    ):
+        warnings.append(
+            f"Plafond mensuel de {params.assistants.monthly_cap:g} : "
+            f"{DEMO_FORMULA_LABEL}. Valeur non validée institutionnellement, elle ne "
+            "devient jamais une règle du planning."
+        )
     capacity_int = int(capacity_raw)
     allocated = _largest_remainder(b_targets, capacity_int)
 
@@ -373,6 +429,14 @@ def project_structural(params: ScenarioParams) -> StructuralProjection:
         dispersion=round(max(totals) - min(totals), 3),
         threshold_exceeded=threshold_exceeded,
         verdict=verdict,
+        assistant_quota_capacity=round(quota_capacity, 3),
+        assistant_cap_capacity=(
+            None if cap_capacity is None else round(cap_capacity, 3)
+        ),
+        assistant_cap_saturation=(
+            None if saturation is None else round(saturation, 4)
+        ),
+        assistant_binding_constraint=binding,
         reasons=reasons,
         warnings=warnings,
     )

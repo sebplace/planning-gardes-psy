@@ -182,4 +182,144 @@ Toutes prouvées par tests (suite complète verte, 85 tests) ; déploiement à s
 - P4.13 health : **ajouté** (`/health/live` 200, `/health/ready` 200/503, sans détail sensible). Tests inclus.
 - P2.2 une version publiée par trimestre : **garanti en base** (index unique partiel `uq_one_published_per_quarter` + migration Alembic `b2f1a7c9d3e0`) en plus de la démotion atomique existante. Tests : doublon rejeté (IntegrityError) + republication bascule en REMPLACE.
 
-Restent à traiter (tranches suivantes) : P1 (reseed 15 seniors 84/10, 3 assistants 19/10/2026-03/10/2027 scénarios 57/68, 6 compteurs seniors + sous-compteurs assistants, campagne T1, 6 permissions distinctes, ordre souple 1..7, reprises L1/L2 nouvelle logique une collecte, repos 12/24h, plafond mensuel administrable NULL), P2 (immuabilité publication UI/services/API, concurrence réelle 2 connexions, motifs neutres collègues, preuve tirage anonymisée, refus non-tirable, EN_REVISION invisible), P3 (UI Quotas + Projections), P4 (CSRF, Argon2id, session opaque révocable, IDOR systématique, logs expurgés, OpenAPI enrichi).
+Restent à traiter (tranches suivantes) : P2 (immuabilité publication UI/services/API,
+concurrence réelle 2 connexions, motifs neutres collègues, preuve tirage anonymisée,
+refus non-tirable, EN_REVISION invisible), P3 (UI Quotas + Projections),
+P4 (CSRF, Argon2id, session opaque révocable, IDOR systématique, logs expurgés,
+OpenAPI enrichi).
+
+---
+
+## Avancement (03/09/2026) — arbitrages métier du client intégrés
+
+Le client a tranché les quatre questions ouvertes le 03/09/2026. Les décisions
+ci-dessous sont désormais **fermes** et implémentées. Suite complète : **160 tests
+verts**. Chaîne Alembic vérifiée dans les deux sens (`upgrade head`,
+`downgrade base`, `upgrade head`).
+
+### Tranche 5 — couverture horaire continue (P1.9bis, P1.11)
+
+Décision du client : supprimer le trou de 8 h à 9 h avant la relève du matin.
+
+- Vendredi non férié : **vendredi 17 h → samedi 9 h**.
+- Veille **ouvrable** d'un jour férié : **17 h → jour férié 9 h**.
+- Samedi, dimanche, jour férié : 9 h → 9 h (inchangé).
+- Un vendredi férié reste classé **férié**.
+- Si la veille tombe déjà un samedi, un dimanche ou un jour férié, **aucune
+  occurrence supplémentaire** n'est créée : la date garde son propre type.
+- Q-03 est **close** : les six horaires sont confirmés, plus aucun type n'est
+  marqué « horaires à valider ».
+
+Migration `d4e3c2b1a098`. Tests : `tests/test_metier_p1c.py`, dont un invariant de
+continuité qui échoue si une garde suivie d'une relève à 9 h ne se termine pas
+exactement à 9 h.
+
+### Tranche 6 — plafond mensuel administrable (P1.5, P1.6)
+
+Décision du client : ne pas transformer automatiquement 5 ou 6 en plafond ferme.
+
+- Nouveau modèle `MonthlyCap`, valeur **nullable**, avec **trois verrous cumulés**
+  avant qu'un plafond ne devienne opposable : valeur chiffrée strictement
+  positive, validation institutionnelle explicite, caractère déclaré ferme.
+- Tant qu'un verrou manque, le plafond est **informatif** : il alimente
+  projections et alertes, jamais le moteur.
+- Nouvelle contrainte ferme `H12_PLAFOND_MENSUEL_FERME`, active uniquement quand
+  les trois verrous sont franchis.
+- Le jeu de démonstration enregistre une ligne **vide** par statut, ce qui produit
+  une alerte explicite plutôt qu'une valeur devinée.
+- Quota global et plafond mensuel restent **deux paramètres distincts**.
+- Trois comparaisons calculées : quota 57 avec plafond 6 (saturation 82,6 %),
+  quota 68 avec plafond 7 (84,5 %), et le scénario de contrainte quota 68 avec
+  plafond 6 (**98,6 %**, marge mensuelle quasi nulle, alerte émise).
+- La période assistante est calculée depuis les dates réelles : du 19/10/2026 au
+  03/10/2027 inclus, soit 350 jours, exactement 50 semaines.
+
+Migration `e5f4d3c2b109`. Tests : `tests/test_plafond_mensuel.py`.
+
+### Tranche 7 — repos et récupération (P1.8, P1.26)
+
+Décision du client : pas d'interdiction universelle de 24 h entre toutes les gardes.
+
+- La règle ferme `REPOS_MIN_24H` est **retirée** (désactivée, pas supprimée, pour
+  conserver la trace). Il ne reste **aucune** règle de repos ferme générique.
+- L'espacement ordinaire reste un objectif **souple**, configurable et non validé.
+- Nouvelle contrainte ferme `H13_DUREE_CONTINUE_MAXIMALE` : jamais plus de 24 h de
+  service continu, **dérogeable uniquement** par une demande explicite et datée de
+  la personne (`WeekendBlockRequest`). C'est le mécanisme du week-end complet.
+- `OnSiteReport` : déclaration de travail réellement effectué sur place. **Aucune
+  présomption** : sans déclaration, une garde ne vaut aucune heure sur place.
+- `RecoveryProposal` : 12 h de récupération **proposées** après 12 h continues
+  réellement travaillées sur place avec déplacement. État initial `PROPOSEE`,
+  décision humaine obligatoire, aucune application automatique.
+- Un simple appel sans déplacement n'ouvre aucun droit, quelle que soit la durée.
+- Des heures fractionnées n'ouvrent aucun droit.
+- La concentration produit une **alerte** paramétrable, jamais une règle ferme.
+
+Migration `f6a5b4c3d210`. Tests : `tests/test_repos_recuperation.py`.
+
+### Tranche 8 — reprises L1 et L2 (P1.23, P1.24, P2.10)
+
+Décision du client : collecte unique en L2, sans effacer la priorité du vert.
+
+- `DISPO_DEFAUT` est **exclu de toutes les reprises**. Une non-réponse peut servir
+  à la génération initiale, jamais à désigner un volontaire.
+- Reprise **L1** : uniquement les personnes explicitement vertes et éligibles.
+- Reprise **L2** : une **seule** collecte, verts et orange sollicités en même
+  temps, même fenêtre, aucun avantage à la rapidité.
+- À la clôture, les candidatures sont revalidées, puis le tirage porte
+  **uniquement sur les verts valides** ; les orange ne sont tirés qu'en l'absence
+  totale de vert valide. La preuve du tirage documente le palier retenu, la liste
+  des verts, celle des orange et la règle de priorité appliquée.
+- La couleur retenue est celle constatée **à la clôture**, pas au dépôt.
+- Plus aucune vague orange successive : sans volontaire valide, le titulaire
+  publié reste responsable et les responsables sont alertés.
+- Nouveaux états `COLLECTE_UNIQUE` / `LISTE_FIGEE_UNIQUE` ; les états orange sont
+  conservés pour les données antérieures mais ne sont plus jamais atteints.
+
+Tests : `tests/test_reprises_v2.py`.
+
+### Tranche 9 — jeu de données métier et compteurs (P1.1 à P1.4, P1.12, P1.13, P1.18)
+
+- **15 seniors** portant les pondérations de garde 7, 6, 7, 8, 8, 0, 7, 8, 6, 0, 3,
+  6, 6, 7, 5, soit **84/10 au 01/10/2026**, historisées avec date d'effet et
+  distinctes de la quotité de temps de travail.
+- **3 assistants**, période d'activité du 19/10/2026 au 03/10/2027 incluse,
+  première ligne uniquement, déclarations limitées au vert et au rouge.
+- **Campagne T1** aux dates réelles : ouverture 01/11, rappel 15/11, clôture
+  01/12, publication 07/12.
+- L'obligation liée aux **paires de jours fériés n'est pas étendue aux assistants**.
+- **Six compteurs seniors** : trois catégories comptables croisées avec les deux
+  lignes, toujours présents même à zéro, pondérés au poids **en vigueur à la date
+  de la garde**. Sans pondération enregistrée, le compteur pondéré reste vide.
+- **Cinq sous-compteurs assistants** : vendredi, veille de férié, samedi,
+  dimanche, jour férié. Indicateurs statistiques, jamais contraignants.
+
+Tests : `tests/test_compteurs.py`.
+
+### Tranche 10 — six permissions distinctes (P1.19)
+
+- Nouveau modèle `PermissionGrant` : `RESP_L1`, `RESP_L2`, `CHEF_SERVICE`,
+  `GESTION_COMPTES`, `PUBLICATION`, `CONSULTATION_AUDIT`.
+- Chaque permission est attribuée séparément, **datée** et **journalisée**.
+- Une révocation pose une date de fin, elle n'efface rien.
+- Une permission accordée n'en donne aucune autre.
+- Un administrateur les détient toutes, ce qui préserve le fonctionnement actuel
+  pendant la mise en place des délégations fines.
+- Branchées sur le journal d'audit (interface et API) et sur la validation puis la
+  publication d'un planning.
+- Le jeu de démonstration délègue les six permissions à six médecins **non
+  administrateurs**.
+
+Migration `a7b6c5d4e321`. Tests : `tests/test_permissions.py`.
+
+### Points restant ouverts après ces arbitrages
+
+- Le **plafond mensuel institutionnel** reste à chiffrer. L'application alerte,
+  elle n'invente pas.
+- La **dérogation de bloc continu** a été confirmée pour le week-end complet des
+  assistants. Elle est implémentée de façon générique, donc un senior souhaitant
+  un week-end complet devrait lui aussi formuler une demande explicite. À
+  confirmer par le client.
+- Les **situations intermédiaires** de récupération restent volontairement sans
+  automatisme, conformément à la demande d'appréciation humaine.
+

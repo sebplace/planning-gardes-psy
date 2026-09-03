@@ -278,40 +278,36 @@ def test_15_43_vitesse_de_reponse_sans_effet_et_resultat_immediatement_officiel(
 # --------------------------------------------------------------------------- #
 
 
-def test_13_42_vague_verte_avant_orange(world):
+def test_13_42_une_seule_collecte_puis_escalade(world):
+    """Arbitrage du 03/09/2026 : plus aucune vague orange successive.
+
+    Sans volontaire valide, le titulaire publié reste responsable et les
+    responsables sont alertés.
+    """
     session = world.session
     publish_plan(world)
     demande, wave, titulaire = _ouvrir(world, minimum_solicites=2)
     solicites = _solicites(session, wave)
 
-    # Une personne passe en orange : elle quitte la vague verte.
-    orange = solicites[-1]
-    occurrence = demande.assignment.post.occurrence
-    world.set_color(orange, occurrence, Color.ORANGE)
-
-    # Tout le monde refuse en vague verte.
     for profile in solicites:
         handover_service.decline(session, wave, profile)
     handover_service.advance(session, demande)
     session.refresh(demande)
 
     kinds = [w.kind for w in sorted(demande.waves, key=lambda w: w.id)]
-    assert kinds[0] is WaveKind.VERTE
-    if len(kinds) > 1:
-        assert kinds[1] is WaveKind.ORANGE
-        assert demande.state in (HandoverState.COLLECTE_ORANGE, HandoverState.ESCALADE)
-        orange_wave = demande.waves[-1]
-        if orange_wave.state is WaveState.OUVERTE:
-            assert orange in _solicites(session, orange_wave)
-    else:
-        assert demande.state is HandoverState.ESCALADE
+    assert len(kinds) == 1, "Une seule collecte, jamais de seconde vague."
+    assert kinds[0] in (WaveKind.VERTE, WaveKind.UNIQUE)
+    assert WaveKind.ORANGE not in kinds
+    assert demande.state is HandoverState.ESCALADE
+    # Le titulaire publié reste responsable de la garde.
+    assert demande.assignment.profile_id == titulaire.id
 
     # 42 — candidature tardive rejetée sur une vague déjà close.
     with pytest.raises(handover_service.HandoverError):
         handover_service.submit_candidacy(session, wave, solicites[0])
 
 
-def test_42b_pas_de_vague_orange_si_une_candidature_verte_est_valide(world):
+def test_42b_une_candidature_valide_suffit_a_attribuer(world):
     session = world.session
     publish_plan(world)
     demande, wave, _ = _ouvrir(world, minimum_solicites=2)
@@ -321,7 +317,7 @@ def test_42b_pas_de_vague_orange_si_une_candidature_verte_est_valide(world):
         handover_service.decline(session, wave, profile)
     handover_service.advance(session, demande)
     session.refresh(demande)
-    assert [w.kind for w in demande.waves] == [WaveKind.VERTE]
+    assert len(demande.waves) == 1
     assert demande.state is HandoverState.ATTRIBUEE
 
 

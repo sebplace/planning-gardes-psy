@@ -45,11 +45,13 @@ from ...models import (
     WaveState,
     Year,
 )
+from ...models import permissions
 from ...services import (
     audit_service,
     campaign_service,
     handover_service,
     notification_service,
+    permission_service,
     planning_service,
     projection_service,
     quota_service,
@@ -655,9 +657,21 @@ def version_action(
         elif action == "deverrouiller":
             planning_service.set_lock(session, version, int(post_id), False, user)
         elif action == "valider":
+            if not permission_service.has_permission(
+                session, user, permissions.PUBLICATION
+            ):
+                raise HTTPException(
+                    403, "Droit « Validation et publication du planning » requis."
+                )
             planning_service.validate_version(session, version, user)
             flash(request, "succes", "Planning validé. Il peut maintenant être publié.")
         elif action == "publier":
+            if not permission_service.has_permission(
+                session, user, permissions.PUBLICATION
+            ):
+                raise HTTPException(
+                    403, "Droit « Validation et publication du planning » requis."
+                )
             planning_service.publish_version(session, version, user)
             flash(request, "succes", "Planning publié. Les médecins ont été notifiés (simulation).")
         elif action == "regenerer":
@@ -941,8 +955,12 @@ def audit(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not user.is_admin:
-        raise HTTPException(403, "Réservé aux administrateurs.")
+    if not permission_service.has_permission(
+        session, user, permissions.CONSULTATION_AUDIT
+    ):
+        raise HTTPException(
+            403, "Droit « Consultation du journal d'audit » requis."
+        )
     ok, problems = audit_service.verify_chain(session)
     events = list(
         session.execute(select(AuditEvent).order_by(AuditEvent.id.desc()).limit(300)).scalars()

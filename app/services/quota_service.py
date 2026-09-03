@@ -14,9 +14,11 @@ from sqlalchemy.orm import Session
 from ..models import (
     Assignment,
     CoveragePost,
+    Enforcement,
     GardeOccurrence,
     GardeType,
     Line,
+    MonthlyCap,
     ProfessionalProfile,
     Quarter,
     QuotaAdjustment,
@@ -25,6 +27,7 @@ from ..models import (
     QuotaTargetHistory,
     ScheduleState,
     ScheduleVersion,
+    Status,
     User,
     Year,
 )
@@ -215,6 +218,105 @@ def set_target(
          "ancienne_cible": old, "nouvelle_cible": target}, actor=admin,
     )
     return row
+
+
+# --------------------------------------------------------------------------- #
+# Plafond mensuel — administrable, jamais inventé
+# --------------------------------------------------------------------------- #
+
+
+def set_monthly_cap(
+    session: Session,
+    year: Year,
+    admin: User,
+    status: Status | None = None,
+    profile: ProfessionalProfile | None = None,
+    max_per_month: float | None = None,
+    enforcement: Enforcement = Enforcement.SOUPLE,
+    institutionally_validated: bool = False,
+    label: str = "plafond mensuel",
+    comment: str | None = None,
+) -> MonthlyCap:
+    """Crée ou met à jour un plafond mensuel.
+
+    Le plafond reste **non opposable** tant qu'il n'est pas à la fois chiffré,
+    validé institutionnellement et déclaré ferme. Une valeur de simulation ne
+    devient donc jamais une règle par simple saisie.
+    """
+    if status is None and profile is None:
+        raise ValueError("Un plafond mensuel vise soit un statut, soit un profil.")
+
+    row = session.execute(
+        select(MonthlyCap).where(
+            MonthlyCap.year_id == year.id,
+            MonthlyCap.status == status,
+            MonthlyCap.profile_id == (profile.id if profile else None),
+        )
+    ).scalar_one_or_none()
+    ancien = row.max_per_month if row else None
+    if row is None:
+        row = MonthlyCap(
+            year_id=year.id,
+            status=status,
+            profile_id=profile.id if profile else None,
+        )
+        session.add(row)
+    row.max_per_month = max_per_month
+    row.enforcement = enforcement
+    row.institutionally_validated = institutionally_validated
+    row.label = label
+    row.comment = comment
+    row.created_by_id = admin.id if admin else None
+    session.flush()
+
+    audit_service.record(
+        session,
+        "PLAFOND_MENSUEL_MODIFIE",
+        "monthly_cap",
+        row.id,
+        {
+            "portee": profile.code if profile else (status.value if status else None),
+            "ancien_plafond": ancien,
+            "nouveau_plafond": max_per_month,
+            "caractere": enforcement.value,
+            "valide_institutionnellement": institutionally_validated,
+            "opposable": row.is_enforceable,
+        },
+        actor=admin,
+    )
+    return row
+
+
+def monthly_caps(session: Session, year: Year) -> list[MonthlyCap]:
+    return list(
+        session.execute(
+            select(MonthlyCap)
+            .where(MonthlyCap.year_id == year.id)
+            .order_by(MonthlyCap.id)
+        ).scalars()
+    )
+
+
+def monthly_cap_alerts(session: Session, year: Year) -> list[str]:
+    """Alertes à afficher avant tout planning officiel.
+
+    Un statut sans aucun plafond enregistré produit également une alerte : la
+    valeur institutionnelle est attendue, elle n'est jamais devinée.
+    """
+    rows = monthly_caps(session, year)
+    alertes = [message for row in rows if (message := row.alert)]
+
+    couverts = {row.status for row in rows if row.status is not None}
+    for status in (Status.SENIOR, Status.ASSISTANT):
+        présents = session.execute(
+            select(ProfessionalProfile.id).where(ProfessionalProfile.status == status)
+        ).first()
+        if présents is not None and status not in couverts:
+            alertes.append(
+                f"Aucun plafond mensuel enregistré pour le statut {status.value}. "
+                "Valeur institutionnelle attendue avant tout planning officiel."
+            )
+    return alertes
 
 
 def apply_handover_adjustment(

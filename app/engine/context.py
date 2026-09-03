@@ -9,10 +9,12 @@ from .types import (
     AvailabilityIn,
     BusyIntervalIn,
     Color,
+    ContinuousDutyRuleIn,
     EngineInput,
     Enforcement,
     ExemptionIn,
     Line,
+    MonthlyCapIn,
     PersonIn,
     PostIn,
     QuotaIn,
@@ -56,6 +58,14 @@ class Context:
         for b in inp.busy_intervals:
             self._busy[b.profile_id].append(b)
 
+        # Plafonds mensuels : seuls ceux qui franchissent les trois verrous sont
+        # opposables ; les autres restent purement informatifs.
+        self.monthly_caps: list[MonthlyCapIn] = list(inp.monthly_caps)
+        self.enforceable_monthly_caps: list[MonthlyCapIn] = [
+            c for c in self.monthly_caps if c.is_enforceable
+        ]
+        self.continuous_duty = inp.continuous_duty
+
         self.incompatibilities = set(inp.incompatibilities)
         self.locked = dict(inp.locked)
         self.prior_load = dict(inp.prior_load)
@@ -98,6 +108,10 @@ class Context:
 
     def busy_intervals(self, profile_id: int) -> list[tuple[datetime, datetime, str]]:
         return [(b.start_at, b.end_at, b.label) for b in self._busy.get(profile_id, ())]
+
+    def monthly_caps_for(self, person: PersonIn) -> list[MonthlyCapIn]:
+        """Plafonds mensuels **opposables** applicables à une personne."""
+        return [c for c in self.enforceable_monthly_caps if c.applies_to(person)]
 
     def eligible_people_for(self, post: PostIn) -> list[PersonIn]:
         """Candidats potentiels, hors contraintes dépendant de l'état courant."""
@@ -180,6 +194,59 @@ class State:
             for p in self.by_person.get(profile_id, ())
             if abs(p.local_date - day) < delta
         )
+
+    def count_in_month(self, profile_id: int, day: date) -> float:
+        """Charge déjà posée sur le mois calendaire de ``day``, en poids de décompte."""
+        return sum(
+            p.count_weight
+            for p in self.by_person.get(profile_id, ())
+            if p.local_date.year == day.year and p.local_date.month == day.month
+        )
+
+    def continuous_chain(
+        self, profile_id: int, post: PostIn
+    ) -> tuple[float, set[date]]:
+        """Durée du bloc de service continu incluant ``post``, et jours concernés.
+
+        Deux gardes sont dites contiguës lorsque la seconde commence exactement à
+        la fin de la première, ou plus tôt. Aucune tolérance n'est introduite :
+        une coupure, même d'une heure, brise la continuité.
+        """
+        segments = [(post.start_at, post.end_at, post.local_date)]
+        for p in self.by_person.get(profile_id, ()):
+            if p.post_id == post.post_id:
+                continue
+            segments.append((p.start_at, p.end_at, p.local_date))
+        for start, end, _ in self.ctx.busy_intervals(profile_id):
+            segments.append((start, end, start.date()))
+        segments.sort()
+
+        best_hours = 0.0
+        best_days: set[date] = set()
+        courant_debut = courant_fin = None
+        courant_jours: set[date] = set()
+        contient_post = False
+
+        for start, end, day in segments:
+            if courant_fin is None or start > courant_fin:
+                if contient_post and courant_debut is not None:
+                    heures = (courant_fin - courant_debut).total_seconds() / 3600.0
+                    if heures > best_hours:
+                        best_hours, best_days = heures, set(courant_jours)
+                courant_debut, courant_fin = start, end
+                courant_jours = {day}
+                contient_post = start == post.start_at and end == post.end_at
+            else:
+                courant_fin = max(courant_fin, end)
+                courant_jours.add(day)
+                if start == post.start_at and end == post.end_at:
+                    contient_post = True
+
+        if contient_post and courant_debut is not None:
+            heures = (courant_fin - courant_debut).total_seconds() / 3600.0
+            if heures > best_hours:
+                best_hours, best_days = heures, set(courant_jours)
+        return best_hours, best_days
 
     def weekend_weeks(self, profile_id: int) -> list[tuple[int, int]]:
         weeks = {

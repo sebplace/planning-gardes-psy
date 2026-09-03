@@ -66,6 +66,9 @@ class HandoverRequest(Base, TimestampMixin):
             HandoverState.BROUILLON,
             HandoverState.COLLECTE_VERTE,
             HandoverState.LISTE_FIGEE_VERTE,
+            HandoverState.COLLECTE_UNIQUE,
+            HandoverState.LISTE_FIGEE_UNIQUE,
+            # États hérités, conservés pour les données antérieures.
             HandoverState.COLLECTE_ORANGE,
             HandoverState.LISTE_FIGEE_ORANGE,
         )

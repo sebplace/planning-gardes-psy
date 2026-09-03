@@ -43,12 +43,32 @@ from .catalog import (  # noqa: F401
 )
 from .quotas import (  # noqa: F401
     Exemption,
+    MonthlyCap,
     QuotaAdjustment,
     QuotaTarget,
     QuotaTargetHistory,
     RestRule,
 )
 from .campaign import Availability, Campaign, Submission  # noqa: F401
+from .rest import (  # noqa: F401
+    DUREE_CONTINUE_MAX_HEURES,
+    DUREE_RECUPERATION_HEURES,
+    SEUIL_RECUPERATION_HEURES,
+    OnSiteReport,
+    RecoveryProposal,
+    WeekendBlockRequest,
+)
+from .permissions import (  # noqa: F401
+    CHEF_SERVICE,
+    CONSULTATION_AUDIT,
+    GESTION_COMPTES,
+    LIBELLES,
+    PERMISSIONS,
+    PUBLICATION,
+    RESP_L1,
+    RESP_L2,
+    PermissionGrant,
+)
 from .planning import (  # noqa: F401
     Assignment,
     EngineRun,

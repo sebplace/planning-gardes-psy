@@ -81,3 +81,30 @@ python -m pytest tests -q
   point de définition des contraintes fermes (`app/engine/hard.py`), appelé par tous
   les chemins via `services/engine_bridge.check_assignment`. Le test vérifie en outre
   que la signature de `manual_correction` ne comporte aucun paramètre de dérogation.
+
+---
+
+## Arbitrages métier du client du 03/09/2026
+
+Suite complète : 160 tests. Ces fichiers couvrent les décisions transmises par le
+client et remplacent les attentes antérieures lorsqu'elles étaient contradictoires.
+
+| Arbitrage | Fichier de test |
+|---|---|
+| Couverture horaire continue : vendredi 17h-9h, veille ouvrable de férié 17h-9h, vendredi férié classé férié, pas d'occurrence supplémentaire si la veille est déjà un week-end | `tests/test_metier_p1c.py` |
+| Plafond mensuel administrable, jamais transformé en règle ; trois scénarios de comparaison 57/6, 68/7 et 68/6 | `tests/test_plafond_mensuel.py` |
+| Repos et récupération : pas d'interdiction universelle de 24h, maximum de service continu dérogeable sur demande datée, 12h de récupération proposées et non déclenchées, aucune présomption | `tests/test_repos_recuperation.py` |
+| Reprises : L1 verts explicites, L2 collecte unique avec priorité au vert au tirage, disponibilité par défaut exclue, escalade sans seconde vague | `tests/test_reprises_v2.py` |
+| Jeu de données metier : 15 seniors a 84/10, 3 assistants dates reelles, six compteurs seniors, cinq sous-compteurs assistants | `tests/test_compteurs.py` |
+| Six permissions distinctes, datees, journalisees et sans effet de bord | `tests/test_permissions.py` |
+
+Deux tests antérieurs ont été **réécrits** pour suivre les nouveaux arbitrages, et non
+supprimés :
+
+- `test_engine_hard.py::test_17_regle_de_repos_ferme_jamais_violee` vérifie désormais le
+  maximum de service continu, et `test_17b` vérifie qu'il ne reste plus aucune règle de
+  repos ferme générique ;
+- `test_campaign.py::test_39_...` vérifie désormais que la disponibilité par défaut
+  couvre bien une paire de jours fériés **mais n'ouvre aucune reprise** ;
+- `test_handover.py` ne teste plus l'enchaînement verte puis orange, mais la collecte
+  unique suivie d'une escalade immédiate.

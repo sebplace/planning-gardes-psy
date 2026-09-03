@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_session
 from ..models import ProfessionalProfile, User
+from ..services import permission_service
 
 
 def optional_user(request: Request, session: Session = Depends(get_session)) -> User | None:
@@ -42,3 +43,25 @@ def profile_of(session: Session, user: User) -> ProfessionalProfile | None:
     return session.execute(
         select(ProfessionalProfile).where(ProfessionalProfile.user_id == user.id)
     ).scalar_one_or_none()
+
+
+def require_permission(code: str):
+    """Dépendance FastAPI exigeant une permission précise (P1.19).
+
+    Un administrateur détient toutes les permissions ; une délégation datée
+    suffit à un non-administrateur.
+    """
+
+    def _dependency(
+        user: User = Depends(current_user),
+        session: Session = Depends(get_session),
+    ) -> User:
+        if not permission_service.has_permission(session, user, code):
+            raise HTTPException(
+                403,
+                f"Droit « {permission_service.LIBELLES.get(code, code)} » requis "
+                "pour cette action.",
+            )
+        return user
+
+    return _dependency

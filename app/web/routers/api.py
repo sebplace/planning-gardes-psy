@@ -29,6 +29,7 @@ from ...models import (
     User,
     Year,
 )
+from ...models import permissions
 from ...services import (
     audit_service,
     campaign_service,
@@ -40,7 +41,7 @@ from ...services import (
     swap_service,
 )
 from ...services.clock import Clock
-from ..deps import current_user, require_admin_user
+from ..deps import current_user, require_admin_user, require_permission
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
@@ -471,7 +472,8 @@ def promote(
 
 @router.get("/audit/verify")
 def verify_audit(
-    admin: User = Depends(require_admin_user), session: Session = Depends(get_session)
+    user: User = Depends(require_permission(permissions.CONSULTATION_AUDIT)),
+    session: Session = Depends(get_session),
 ):
     ok, problems = audit_service.verify_chain(session)
     return {"chaine_integre": ok, "anomalies": problems}

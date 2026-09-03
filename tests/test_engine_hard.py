@@ -134,10 +134,16 @@ def test_04_senior_compatible_avec_tout_assistant(world):
 
 # --------------------------------------------------------------------------- #
 # Test 17 — règle de repos ferme jamais violée
+#
+# Arbitrage du client du 03/09/2026 : l'interdiction universelle de 24 h entre
+# toutes les gardes est retirée. Ce qui reste ferme est la durée de service
+# **continu**, dérogeable uniquement par une demande explicite et datée.
 # --------------------------------------------------------------------------- #
 
 
 def test_17_regle_de_repos_ferme_jamais_violee(world):
+    from app.models import DUREE_CONTINUE_MAX_HEURES
+
     run = _solution_of(world)
     for proposal in run.proposals:
         par_personne: dict[int, list[GardeOccurrence]] = {}
@@ -146,11 +152,39 @@ def test_17_regle_de_repos_ferme_jamais_violee(world):
             par_personne.setdefault(item.profile_id, []).append(post.occurrence)
         for occurrences in par_personne.values():
             occurrences.sort(key=lambda o: o.start_at)
-            for avant, apres in zip(occurrences, occurrences[1:]):
-                ecart = (apres.start_at - avant.end_at).total_seconds() / 3600.0
-                assert ecart >= 24.0 - 1e-6, (
-                    f"Repos de {ecart:.1f} h alors que le minimum ferme est de 24 h."
+            # Aucune demande explicite dans cet univers : aucun bloc de service
+            # continu ne peut donc dépasser le maximum.
+            debut = fin = None
+            for occurrence in occurrences:
+                if fin is None or occurrence.start_at > fin:
+                    debut, fin = occurrence.start_at, occurrence.end_at
+                else:
+                    fin = max(fin, occurrence.end_at)
+                duree = (fin - debut).total_seconds() / 3600.0
+                assert duree <= DUREE_CONTINUE_MAX_HEURES + 1e-6, (
+                    f"Service continu de {duree:.1f} h alors que le maximum ferme "
+                    f"est de {DUREE_CONTINUE_MAX_HEURES:.0f} h sans demande explicite."
                 )
+
+
+def test_17b_plus_aucune_interdiction_universelle_de_24h(session):
+    """La règle ferme « 24 h entre deux gardes » a été retirée sur décision du client."""
+    from sqlalchemy import select
+
+    from app.models import Enforcement, RestRule
+    from app.services import catalog_service
+
+    catalog_service.ensure_reference_data(session)
+    fermes = [
+        r
+        for r in session.execute(select(RestRule).where(RestRule.active)).scalars()
+        if r.enforcement is Enforcement.FERME
+    ]
+    assert fermes == []
+    ancienne = session.execute(
+        select(RestRule).where(RestRule.code == "REPOS_MIN_24H")
+    ).scalar_one_or_none()
+    assert ancienne is None or ancienne.active is False
 
 
 # --------------------------------------------------------------------------- #

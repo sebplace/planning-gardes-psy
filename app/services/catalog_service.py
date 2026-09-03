@@ -52,32 +52,31 @@ EXCHANGE_CLASSES = [
     ("JOUR_FERIE", "Jour férié 24 h"),
 ]
 
-# Horaires : OPEN_QUESTIONS.md Q-03 (hypothèses de démonstration).
-# Confirmés par le client : lun-jeu hors férié 17h->8h ; samedi/dimanche/férié 9h->9h.
-# Non confirmés (hypothèse de démonstration, administrables) : vendredi et veille de
-# férié, alignés par défaut sur 17h->8h (jamais 20h).
+# Horaires : OPEN_QUESTIONS.md Q-03.
+# Confirmés par le client (02/09/2026) : lun-jeu hors férié 17h->8h ;
+# samedi / dimanche / jour férié 9h->9h.
+# Confirmés par le client (03/09/2026), pour supprimer le trou de 8h à 9h avant la
+# relève du matin : vendredi non férié 17h->9h (samedi) ; veille ouvrable d'un jour
+# férié 17h->9h (le jour férié).
 GARDE_TYPES = [
     ("NUIT_SEMAINE", "Nuit de semaine (lundi à jeudi)", "NUITS_LJ",
      time(17, 0), time(8, 0), "NUIT_12H", "NUIT_SEMAINE"),
-    ("NUIT_VENDREDI", "Nuit du vendredi", "WEEKENDS_VEILLES",
-     time(17, 0), time(8, 0), "NUIT_12H", "NUIT_VENDREDI"),
+    ("NUIT_VENDREDI", "Nuit du vendredi (vendredi 17 h au samedi 9 h)", "WEEKENDS_VEILLES",
+     time(17, 0), time(9, 0), "NUIT_16H", "NUIT_VENDREDI"),
     ("SAMEDI", "Samedi 9 h au dimanche 9 h", "WEEKENDS_VEILLES",
      time(9, 0), time(9, 0), "JOUR_24H", "WEEKEND_24H"),
     ("DIMANCHE", "Dimanche 9 h au lundi 9 h", "WEEKENDS_VEILLES",
      time(9, 0), time(9, 0), "JOUR_24H", "WEEKEND_24H"),
-    ("VEILLE_FERIE", "Nuit précédant un jour férié", "WEEKENDS_VEILLES",
-     time(17, 0), time(8, 0), "NUIT_12H", "VEILLE_FERIE"),
+    ("VEILLE_FERIE", "Veille ouvrable d'un jour férié (17 h au jour férié 9 h)",
+     "WEEKENDS_VEILLES", time(17, 0), time(9, 0), "NUIT_16H", "VEILLE_FERIE"),
     ("JOUR_FERIE", "Garde d'un jour férié (9 h au lendemain 9 h)", "FERIES",
      time(9, 0), time(9, 0), "JOUR_24H", "JOUR_FERIE"),
 ]
 
 REST_RULES = [
-    {
-        "code": "REPOS_MIN_24H",
-        "label": "Repos minimal de 24 h entre deux gardes",
-        "enforcement": Enforcement.FERME,
-        "min_hours_between": 24.0,
-    },
+    # Arbitrage du client du 03/09/2026 : aucune interdiction universelle de 24 h
+    # entre toutes les gardes. L'espacement ordinaire reste un objectif souple,
+    # configurable et non validé institutionnellement.
     {
         "code": "ESPACEMENT_7J",
         "label": "Espacement souhaité de 7 jours entre deux gardes",
@@ -91,6 +90,9 @@ REST_RULES = [
         "max_consecutive_weekends": 2,
     },
 ]
+
+#: Règles retirées et à supprimer d'une base existante (voir migration f6a5b4c3d210).
+REST_RULES_RETIREES = ["REPOS_MIN_24H"]
 
 # Profil opérationnel : la priorité seniors (M-006) y est active et non désactivable.
 RULE_PROFILE_OPERATIONNEL = {
@@ -166,7 +168,9 @@ def ensure_reference_data(session: Session) -> None:
                 duration_class=duration_class,
                 count_weight=1.0,
                 exchange_class_id=classes[class_code].id,
-                horaires_a_valider=True,
+                # Les six horaires sont désormais confirmés par le client
+                # (02/09/2026 et 03/09/2026). Q-03 est close.
+                horaires_a_valider=False,
             )
         )
     session.flush()
@@ -176,6 +180,15 @@ def ensure_reference_data(session: Session) -> None:
             select(RestRule).where(RestRule.code == spec["code"])
         ).scalar_one_or_none():
             session.add(RestRule(**spec))
+
+    # Une base créée avant l'arbitrage du 03/09/2026 peut encore porter la règle
+    # ferme des 24 h entre gardes : elle est désactivée, jamais réactivée.
+    for code in REST_RULES_RETIREES:
+        obsolete = session.execute(
+            select(RestRule).where(RestRule.code == code)
+        ).scalar_one_or_none()
+        if obsolete is not None:
+            obsolete.active = False
 
     if not session.execute(
         select(RuleProfileRow).where(RuleProfileRow.name == "operationnel")
@@ -239,18 +252,31 @@ def create_year(session: Session, label: str, start: date, end: date) -> Year:
 
 
 def resolve_type_code(day: date, holidays: set[date]) -> str:
-    """Type applicable à une date. Rattachement des veilles : OPEN_QUESTIONS.md Q-04."""
+    """Type applicable à une date. Un seul type par date, donc jamais d'occurrence
+    supplémentaire.
+
+    Ordre confirmé par le client (03/09/2026) :
+
+    1. un jour férié reste férié, **y compris un vendredi férié** ;
+    2. un samedi ou un dimanche garde son propre type même s'il précède un jour férié
+       (interdiction explicite de créer une occurrence de veille supplémentaire) ;
+    3. sinon, une veille **ouvrable** de jour férié est une veille de férié, y compris
+       le vendredi, dont l'horaire 17h->9h est identique ;
+    4. sinon vendredi, sinon nuit de semaine.
+
+    Rattachement comptable des veilles : OPEN_QUESTIONS.md Q-04.
+    """
     if day in holidays:
         return "JOUR_FERIE"
-    if (day + timedelta(days=1)) in holidays:
-        return "VEILLE_FERIE"
     weekday = day.weekday()
-    if weekday == 4:
-        return "NUIT_VENDREDI"
     if weekday == 5:
         return "SAMEDI"
     if weekday == 6:
         return "DIMANCHE"
+    if (day + timedelta(days=1)) in holidays:
+        return "VEILLE_FERIE"
+    if weekday == 4:
+        return "NUIT_VENDREDI"
     return "NUIT_SEMAINE"
 
 

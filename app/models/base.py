@@ -94,6 +94,10 @@ class HandoverState(str, Enum):
     BROUILLON = "BROUILLON"
     COLLECTE_VERTE = "COLLECTE_VERTE"
     LISTE_FIGEE_VERTE = "LISTE_FIGEE_VERTE"
+    #: Collecte unique de deuxième ligne (verts + orange).
+    COLLECTE_UNIQUE = "COLLECTE_UNIQUE"
+    LISTE_FIGEE_UNIQUE = "LISTE_FIGEE_UNIQUE"
+    #: Conservés pour les données antérieures. Plus jamais atteints.
     COLLECTE_ORANGE = "COLLECTE_ORANGE"
     LISTE_FIGEE_ORANGE = "LISTE_FIGEE_ORANGE"
     ATTRIBUEE = "ATTRIBUEE"
@@ -103,7 +107,12 @@ class HandoverState(str, Enum):
 
 
 class WaveKind(str, Enum):
+    #: Reprise de première ligne : verts déclarés uniquement.
     VERTE = "VERTE"
+    #: Reprise de deuxième ligne : collecte unique verts + orange, priorité au vert
+    #: au moment du tirage (arbitrage client du 03/09/2026).
+    UNIQUE = "UNIQUE"
+    #: Conservé pour les données antérieures. Plus jamais ouverte.
     ORANGE = "ORANGE"
 
 

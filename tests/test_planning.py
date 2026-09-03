@@ -193,8 +193,10 @@ def test_47_le_rouge_bloque_tous_les_chemins(world):
     demande = handover_service.request_handover(session, affectation, titulaire)
     eligibles = handover_service.eligible_profiles(session, demande, WaveKind.VERTE)
     assert rouge not in eligibles
-    eligibles_orange = handover_service.eligible_profiles(session, demande, WaveKind.ORANGE)
-    assert rouge not in eligibles_orange
+    eligibles_unique = handover_service.eligible_profiles(
+        session, demande, WaveKind.UNIQUE
+    )
+    assert rouge not in eligibles_unique
     handover_service.cancel_request(session, demande, world.admin)
 
 

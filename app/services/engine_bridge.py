@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -18,11 +18,13 @@ from ..engine import (
     AvailabilityIn,
     BusyIntervalIn,
     Color,
+    ContinuousDutyRuleIn,
     CoverageMode,
     EngineInput,
     Enforcement,
     ExemptionIn,
     Line,
+    MonthlyCapIn,
     PersonIn,
     PostIn,
     QuotaIn,
@@ -39,9 +41,11 @@ from ..models import (
     Availability,
     Campaign,
     CoveragePost,
+    DUREE_CONTINUE_MAX_HEURES,
     Exemption,
     GardeOccurrence,
     GardeType,
+    MonthlyCap,
     ProfessionalProfile,
     Quarter,
     QuotaAdjustment,
@@ -52,6 +56,7 @@ from ..models import (
     ScheduleState,
     ScheduleVersion,
     Submission,
+    WeekendBlockRequest,
 )
 
 RULESET_VERSION = "regles_demo_v1"
@@ -134,9 +139,50 @@ def rest_rules(session: Session) -> list[RestRuleIn]:
     return out
 
 
-# --------------------------------------------------------------------------- #
-# Disponibilités, quotas, exemptions
-# --------------------------------------------------------------------------- #
+def monthly_caps_for_year(session: Session, year_id: int) -> list[MonthlyCapIn]:
+    """Plafonds mensuels enregistrés pour l'année.
+
+    Tous sont transmis au moteur, y compris les non opposables : c'est le moteur
+    qui applique les trois verrous, afin que l'instantané d'exécution garde la
+    trace de ce qui existait sans le rendre effectif.
+    """
+    out: list[MonthlyCapIn] = []
+    for row in session.execute(
+        select(MonthlyCap).where(MonthlyCap.year_id == year_id)
+    ).scalars():
+        out.append(
+            MonthlyCapIn(
+                profile_id=row.profile_id,
+                status=row.status,
+                max_per_month=row.max_per_month,
+                enforcement=row.enforcement,
+                institutionally_validated=row.institutionally_validated,
+                label=row.label,
+            )
+        )
+    return out
+
+
+def continuous_duty_rule(
+    session: Session, max_hours: float = DUREE_CONTINUE_MAX_HEURES
+) -> ContinuousDutyRuleIn:
+    """Règle ferme de durée de service continu, avec ses dérogations datées.
+
+    La seule dérogation possible est une demande explicite formulée par la
+    personne elle-même. Une demande couvre le jour d'ancrage et le lendemain, ce
+    qui correspond au week-end complet du samedi 9 h au lundi 9 h.
+    """
+    paires: set[tuple[date, int]] = set()
+    for demande in session.execute(
+        select(WeekendBlockRequest).where(WeekendBlockRequest.active)
+    ).scalars():
+        paires.add((demande.profile_id, demande.anchor_date))
+        paires.add((demande.profile_id, demande.anchor_date + timedelta(days=1)))
+    return ContinuousDutyRuleIn(
+        max_hours=max_hours,
+        label="durée de service continu",
+        explicit_requests=frozenset(paires),
+    )
 
 
 def availabilities_for_quarter(session: Session, quarter: Quarter) -> list[AvailabilityIn]:
@@ -291,6 +337,8 @@ def build_input(
         quotas=quotas_for_year(session, quarter.year_id),
         exemptions=exemptions(session),
         rest_rules=rest_rules(session),
+        monthly_caps=monthly_caps_for_year(session, quarter.year_id),
+        continuous_duty=continuous_duty_rule(session),
         busy_intervals=busy_intervals(session, quarter),
         locked=locked or {},
         prior_load=prior_load(session, quarter.year_id, quarter.id),
@@ -364,6 +412,8 @@ def check_assignment(
         quotas=quotas_for_year(session, quarter.year_id),
         exemptions=exemptions(session),
         rest_rules=rest_rules(session),
+        monthly_caps=monthly_caps_for_year(session, quarter.year_id),
+        continuous_duty=continuous_duty_rule(session),
         busy_intervals=[],
         prior_load=prior_load(session, quarter.year_id, quarter.id),
         profile=load_rule_profile(session),

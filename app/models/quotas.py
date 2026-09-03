@@ -16,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, Enforcement, Line, TimestampMixin, enum_column
+from .base import Base, Enforcement, Line, Status, TimestampMixin, enum_column
 
 
 class QuotaTarget(Base, TimestampMixin):
@@ -107,6 +107,88 @@ class RestRule(Base, TimestampMixin):
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     version: Mapped[str] = mapped_column(String(40), default="v1", nullable=False)
     is_demo_hypothesis: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class MonthlyCap(Base, TimestampMixin):
+    """Plafond mensuel de gardes, **administrable et distinct du quota global**.
+
+    Arbitrage du client du 03/09/2026 : le plafond institutionnel n'a pas été
+    chiffré. On ne transforme donc jamais automatiquement une valeur de simulation
+    (5, 6 ou 7) en règle ferme. Trois verrous cumulés sont exigés pour qu'un
+    plafond devienne opposable :
+
+    1. ``max_per_month`` renseigné et strictement positif ;
+    2. ``institutionally_validated`` mis à vrai par une décision explicite ;
+    3. ``enforcement`` déclaré ``FERME``.
+
+    Tant que l'un des trois manque, le plafond est **informatif** : il alimente les
+    projections et les alertes, jamais le moteur.
+    """
+
+    __tablename__ = "monthly_caps"
+    __table_args__ = (
+        UniqueConstraint(
+            "year_id", "status", "profile_id", name="uq_monthly_cap_scope"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    year_id: Mapped[int] = mapped_column(ForeignKey("years.id"), nullable=False)
+    status: Mapped[Status | None] = enum_column(Status, nullable=True)
+    profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("professional_profiles.id"), nullable=True
+    )
+
+    max_per_month: Mapped[float | None] = mapped_column(Float, nullable=True)
+    enforcement: Mapped[Enforcement] = enum_column(
+        Enforcement, nullable=False, default=Enforcement.SOUPLE
+    )
+    institutionally_validated: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    label: Mapped[str] = mapped_column(
+        String(200), default="plafond mensuel", nullable=False
+    )
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+    profile = relationship("ProfessionalProfile")
+    year = relationship("Year")
+
+    @property
+    def is_enforceable(self) -> bool:
+        return (
+            self.max_per_month is not None
+            and self.max_per_month > 0
+            and self.institutionally_validated
+            and self.enforcement is Enforcement.FERME
+        )
+
+    @property
+    def alert(self) -> str | None:
+        """Message d'alerte si le plafond n'est pas utilisable tel quel."""
+        cible = (
+            f"le profil {self.profile_id}"
+            if self.profile_id is not None
+            else f"le statut {self.status.value if self.status else 'inconnu'}"
+        )
+        if self.max_per_month is None:
+            return (
+                f"Plafond mensuel non chiffré pour {cible}. Valeur institutionnelle "
+                "attendue avant tout planning officiel : rien n'a été inventé."
+            )
+        if not self.institutionally_validated:
+            return (
+                f"Plafond mensuel de {self.max_per_month:g} saisi pour {cible} mais "
+                "non validé institutionnellement : il reste une hypothèse de "
+                "simulation et n'est pas opposable."
+            )
+        if self.enforcement is not Enforcement.FERME:
+            return (
+                f"Plafond mensuel de {self.max_per_month:g} validé pour {cible} mais "
+                "déclaré souple : il oriente sans jamais bloquer."
+            )
+        return None
 
 
 class QuotaAdjustment(Base, TimestampMixin):

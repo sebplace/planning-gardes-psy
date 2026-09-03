@@ -27,11 +27,15 @@ datées et commentées, sans motif normatif implicite. Si une règle d'âge est 
 elle se traduira par des exemptions générées, pas par une condition en dur.
 
 ## Q-03 — Horaires exacts de certains types de garde
-**Statut** Partiellement tranchée · **Impact** moyen
-*Confirmés par le client (02/09/2026)* : lundi à jeudi hors férié **17:00 → 08:00** ;
+**Statut CLOSE (03/09/2026)** · **Impact** moyen
+*Confirmés par le client le 02/09/2026* : lundi à jeudi hors férié **17:00 → 08:00** ;
 samedi, dimanche et jour férié **09:00 → 09:00 (lendemain)**.
-*Encore hypothèses de démonstration (administrables)* : nuit du vendredi et veille de
-jour férié, alignées par défaut sur **17:00 → 08:00** (jamais 20:00).
+*Confirmés par le client le 03/09/2026*, pour assurer une couverture continue :
+nuit du vendredi non férié **17:00 → samedi 09:00** ; veille **ouvrable** d'un jour
+férié **17:00 → jour férié 09:00**. Un vendredi férié reste classé férié, et si la
+veille tombe déjà un samedi, un dimanche ou un jour férié, aucune occurrence
+supplémentaire n'est créée.
+Plus aucun type n'est marqué « horaires à valider ».
 *Où* : `garde_types.start_time` / `end_time` / `crosses_midnight`, administrables.
 
 ## Q-04 — Rattachement des veilles de jours fériés
@@ -45,15 +49,41 @@ fériée d'une paire via `holiday_pair_members.include_eve`.
 **Statut** Ouverte · **Impact** moyen
 *Valeur de démonstration* : `VERT_ORANGE`.
 *Où* : `campaigns.holiday_pair_requirement`, choisi par l'administrateur à l'ouverture.
-Rappel : après l'échéance et l'application régulière du mécanisme de non-réponse,
-`DISPO_DEFAUT` compte pour cette règle, tout en restant distinct d'un vert déclaré.
+*Tranché le 03/09/2026* : l'obligation liée aux paires de jours fériés **n'est pas
+étendue aux assistants**. Elle ne concerne que les seniors.
+*Tranché le 03/09/2026* : `DISPO_DEFAUT` peut compter pour cette règle après conversion
+régulière, mais reste **exclu de toutes les reprises**.
+
+## Q-13 — Plafond mensuel de gardes
+**Statut Ouverte, valeur attendue** · **Impact** fort
+Le client n'a **pas** chiffré le plafond institutionnel (03/09/2026). Consigne
+explicite : ne pas transformer automatiquement 5 ou 6 en plafond ferme.
+*Ce qui est implémenté* : un plafond administrable, nullable, qui n'est opposable
+qu'après trois verrous cumulés — valeur chiffrée, validation institutionnelle
+explicite, caractère déclaré ferme. Tant qu'un verrou manque, il est informatif.
+Une alerte est produite pour chaque statut sans plafond enregistré.
+*Valeurs de simulation utilisées en projection, jamais des règles* : quota 57 avec
+plafond 6, quota 68 avec plafond 7, et le scénario de contrainte quota 68 avec
+plafond 6 (saturation 98,6 % sur la période de 50 semaines).
+*Où* : `monthly_caps`, `app/engine/hard.py` (H12), `projection_service`.
 
 ## Q-06 — Repos minimal et gardes rapprochées
-**Statut** Ouverte · **Impact** fort
-*Valeurs de démonstration* : repos **ferme** de 24 h entre deux fins/débuts de garde ;
-espacement **souple** cible de 7 jours ; maximum souple de 2 week-ends consécutifs.
-*Où* : `rest_rules` avec `enforcement` = `FERME` ou `SOUPLE`, `params_json`, versionnées.
-Le caractère ferme ou souple de chaque règle est **une décision institutionnelle attendue**.
+**Statut Partiellement tranchée (03/09/2026)** · **Impact** fort
+*Tranché par le client* : **aucune interdiction universelle de 24 h** entre toutes les
+gardes. La règle ferme correspondante a été retirée. Ce qui est ferme désormais :
+ne jamais dépasser **24 h de service continu**, sauf demande explicite et datée de la
+personne (cas du week-end complet). S'y ajoutent, hors moteur : au moins **12 h de
+récupération** après **12 h continues réellement travaillées sur place**, proposées et
+soumises à validation humaine ; aucun droit ouvert par un simple appel sans
+déplacement ; **aucune présomption** de nuit travaillée du seul fait d'avoir été de
+garde.
+*Reste ouvert* : l'espacement prévisionnel ordinaire (valeur de démonstration : 7 jours,
+**souple**) et le maximum de week-ends consécutifs (2, **souple**) ne sont pas validés
+institutionnellement. La concentration produit une alerte paramétrable, jamais une règle.
+*Nouvelle question* : la dérogation de bloc continu a été confirmée pour les assistants ;
+elle est implémentée de façon générique, donc un senior souhaitant un week-end complet
+devrait lui aussi formuler une demande explicite. À confirmer.
+*Où* : `rest_rules`, `weekend_block_requests`, `on_site_reports`, `recovery_proposals`.
 
 ## Q-07 — Ordre et pondération exacts des critères souples
 **Statut** Ouverte sauf pour la priorité seniors (M-006, tranchée) · **Impact** fort

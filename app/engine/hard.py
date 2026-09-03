@@ -11,6 +11,7 @@ from .types import (
     H_ASSISTANT_L2,
     H_CHEVAUCHEMENT,
     H_DOUBLE_POSTE,
+    H_DUREE_CONTINUE,
     H_ELIGIBILITE,
     H_EXEMPTION,
     H_INACTIF,
@@ -19,6 +20,7 @@ from .types import (
     H_MAX_FERME,
     H_NON_RENSEIGNE,
     H_ORANGE_L1,
+    H_PLAFOND_MENSUEL,
     H_REPOS,
     H_ROUGE,
     H_STATUT_POSTE,
@@ -142,6 +144,37 @@ def hard_violation(ctx: Context, state: State, post: PostIn, person: PersonIn) -
         detail = _rest_violation(state, post, person.profile_id, rule)
         if detail is not None:
             return rej(H_REPOS, f"{rule.label} : {detail}")
+
+    # ---- H12 : plafond mensuel ---------------------------------------------- #
+    # Le plafond mensuel n'est opposable que s'il est chiffré, validé
+    # institutionnellement et déclaré ferme. Un plafond de simulation ne bloque
+    # jamais (arbitrage client du 03/09/2026).
+    for cap in ctx.monthly_caps_for(person):
+        current = state.count_in_month(person.profile_id, post.local_date)
+        if current + post.count_weight > cap.max_per_month + 1e-9:
+            return rej(
+                H_PLAFOND_MENSUEL,
+                f"{cap.label} : {current:.2f} + {post.count_weight:.2f} "
+                f"> {cap.max_per_month:.2f} sur "
+                f"{post.local_date.strftime('%m/%Y')}.",
+            )
+
+    # ---- H13 : durée de service continu ------------------------------------ #
+    # Le client interdit de dépasser 24 h d'affilée, tout en autorisant le
+    # week-end complet d'un assistant sur demande explicite et datée. La
+    # dérogation n'existe donc que si la personne l'a elle-même formulée.
+    rule = ctx.continuous_duty
+    if rule is not None:
+        heures, jours = state.continuous_chain(person.profile_id, post)
+        if heures > rule.max_hours + 1e-9 and not rule.has_request(
+            person.profile_id, jours
+        ):
+            return rej(
+                H_DUREE_CONTINUE,
+                f"{rule.label} de {heures:.1f} h d'affilée, maximum "
+                f"{rule.max_hours:.1f} h. Aucune demande explicite et datée de la "
+                "personne pour ce bloc.",
+            )
 
     return None
 
