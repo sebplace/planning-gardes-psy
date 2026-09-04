@@ -102,6 +102,12 @@ QUOTITES = [10, 10, 10, 10, 10, 10, 9, 9, 8, 8, 8, 6, 5, 5, 7]
 PONDERATIONS_GARDE = [7, 6, 7, 8, 8, 0, 7, 8, 6, 0, 3, 6, 6, 7, 5]
 PONDERATIONS_EFFET = date(2026, 10, 1)
 
+#: Date d'effet des délégations de permissions dans le jeu de démonstration.
+#: Volontairement antérieure, pour que les fonctions administratives soient en
+#: vigueur quel que soit le jour de la présentation. C'est une donnée datée,
+#: modifiable, sans rapport avec la date d'effet des pondérations.
+PERMISSIONS_EFFET = date(2026, 1, 1)
+
 #: Campagne du premier trimestre, dates transmises par le client.
 CAMPAGNE_T1_OUVERTURE = datetime(2026, 11, 1, 8, 0)
 CAMPAGNE_T1_RAPPEL = datetime(2026, 11, 15, 8, 0)
@@ -246,7 +252,10 @@ def seed_people(session) -> dict:
             session.get(User, profil.user_id),
             code,
             admin,
-            start_date=PONDERATIONS_EFFET,
+            # Date d'effet volontairement antérieure au jeu de démonstration, pour
+            # que les délégations soient réellement en vigueur pendant une
+            # présentation. Elle reste une donnée datée et modifiable.
+            start_date=PERMISSIONS_EFFET,
             comment=f"Attribution fictive : {permissions.LIBELLES[code]}.",
         )
     session.flush()
@@ -283,7 +292,7 @@ def seed_people(session) -> dict:
         if p.code not in avec_fonction and p.code not in cumul_admin
     ]
     print(
-        f"  acces administratif a partir du {PONDERATIONS_EFFET:%d/%m/%Y} : "
+        f"  acces administratif a partir du {PERMISSIONS_EFFET:%d/%m/%Y} : "
         + ", ".join(porteurs)
         + f" ; plus {', '.join(sorted(cumul_admin))} (cumul medecin/administrateur)"
     )
