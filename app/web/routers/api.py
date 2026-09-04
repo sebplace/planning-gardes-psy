@@ -169,6 +169,9 @@ def manual_assignment(
     except planning_service.HardConstraintError as exc:
         session.rollback()
         raise HTTPException(409, str(exc))
+    except planning_service.ImmutableVersionError as exc:
+        session.rollback()
+        raise HTTPException(409, str(exc))
     except planning_service.PlanningError as exc:
         session.rollback()
         raise HTTPException(400, str(exc))
@@ -318,7 +321,16 @@ def advance_handover(
     request_obj = session.get(HandoverRequest, request_id)
     if request_obj is None:
         raise HTTPException(404, "Demande inconnue.")
-    handover_service.advance(session, request_obj)
+    # Le périmètre de ligne est vérifié dans le service, donc identiquement en
+    # interface et en API : ce chemin ne peut plus contourner le contrôle.
+    try:
+        handover_service.advance(
+            session, request_obj, actor=user, enforce_permissions=True
+        )
+    except handover_service.HandoverPermissionError as exc:
+        raise HTTPException(403, str(exc)) from None
+    except handover_service.HandoverError as exc:
+        raise HTTPException(409, str(exc)) from None
     session.commit()
     session.refresh(request_obj)
     return {"demande": request_obj.id, "etat": request_obj.state.value}

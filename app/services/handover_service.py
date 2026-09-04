@@ -64,6 +64,14 @@ class HandoverError(Exception):
     pass
 
 
+class HandoverPermissionError(HandoverError):
+    """Refus de droit sur une reprise, distinct d'un refus métier.
+
+    Sous-classe de ``HandoverError`` pour que les appelants existants continuent
+    de fonctionner, mais identifiable pour répondre 403 plutôt que 409.
+    """
+
+
 # --------------------------------------------------------------------------- #
 # Fenêtres et rappels adaptatifs (OPEN_QUESTIONS.md Q-09)
 # --------------------------------------------------------------------------- #
@@ -735,8 +743,25 @@ def current_wave(request: HandoverRequest) -> HandoverWave | None:
     return open_waves[0] if open_waves else None
 
 
-def advance(session: Session, request: HandoverRequest) -> HandoverRequest:
-    """Fait progresser la demande : ouverture, rappels, clôture, tirage, vague orange, escalade."""
+def advance(
+    session: Session,
+    request: HandoverRequest,
+    actor: User | None = None,
+    enforce_permissions: bool = False,
+) -> HandoverRequest:
+    """Fait progresser la demande : ouverture, rappels, clôture, tirage, escalade.
+
+    Quand ``enforce_permissions`` est vrai, le périmètre de ligne est vérifié
+    **ici**, au niveau métier. C'est le point d'entrée unique de l'interface web
+    comme de l'API : un contrôle posé dans une seule couche de présentation
+    serait contournable par l'autre.
+
+    Les appels internes (jeu de démonstration, ``run_until_settled`` mécanique)
+    laissent la valeur par défaut, car ils ne sont pas déclenchés par un
+    utilisateur.
+    """
+    if enforce_permissions:
+        assert_may_advance(session, request, actor)
     session.refresh(request)
     if not request.is_open:
         return request
@@ -764,6 +789,27 @@ def advance(session: Session, request: HandoverRequest) -> HandoverRequest:
         )
         escalate(session, request, [motif])
     return request
+
+
+def line_of(request: HandoverRequest) -> str:
+    """Ligne de garde concernée par une demande de reprise."""
+    return _post_of(request).line.value
+
+
+def assert_may_advance(
+    session: Session, request: HandoverRequest, actor: User | None
+) -> None:
+    """Garde métier unique du périmètre de ligne sur l'avancement d'une reprise.
+
+    Le responsable des gardes de première ligne ne peut pas faire avancer une
+    reprise de deuxième ligne, et inversement. Le chef de service couvre les deux.
+    """
+    from . import permission_service
+
+    try:
+        permission_service.require_line_supervision(session, actor, line_of(request))
+    except permission_service.PermissionError_ as exc:
+        raise HandoverPermissionError(str(exc)) from None
 
 
 def run_until_settled(session: Session, request: HandoverRequest, max_steps: int = 8):

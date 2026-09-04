@@ -18,11 +18,9 @@ def main() -> None:
 
     if settings.database_url.startswith("sqlite"):
         raise SystemExit("Refus : ce script ne s'exécute que sur une base PostgreSQL.")
-    # Verrou : réinitialisation destructive interdite en production.
-    if envsvc.is_production():
-        raise SystemExit(
-            "Refus : la réinitialisation de schéma est interdite en production."
-        )
+    # Verrou destructif complet et fail-closed : environnement déterminable, hors
+    # production, base explicitement déclarée fictive, et aucun compte non fictif.
+    envsvc.assert_destructive_seed_allowed()
     with engine.begin() as conn:
         conn.execute(text("DROP SCHEMA public CASCADE"))
         conn.execute(text("CREATE SCHEMA public"))

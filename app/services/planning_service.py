@@ -284,9 +284,10 @@ def manual_correction(
     une incompatibilité ou une règle ferme de repos.
     """
     if version.state in (ScheduleState.PUBLIE, ScheduleState.REMPLACE):
-        raise PlanningError(
+        raise ImmutableVersionError(
             "Un planning publié n'est jamais réécrit : créez une nouvelle version."
         )
+    assert_version_mutable(version, "correction manuelle")
     if not reason or not reason.strip():
         raise PlanningError("Un motif bref est obligatoire pour toute correction manuelle.")
 
@@ -345,9 +346,64 @@ def manual_correction(
     return assignment
 
 
+#: Seuls états dans lesquels une version peut encore être modifiée.
+#: Une version PUBLIE est **définitivement** figée : toute correction passe par
+#: une nouvelle version (clone), jamais par une réécriture.
+ETATS_MODIFIABLES = (ScheduleState.GENERE, ScheduleState.EN_REVISION)
+
+#: Transitions d'état autorisées. Toute autre transition est refusée, en
+#: particulier PUBLIE -> VALIDE et REMPLACE -> quoi que ce soit.
+TRANSITIONS_AUTORISEES: dict[ScheduleState, tuple[ScheduleState, ...]] = {
+    ScheduleState.GENERE: (ScheduleState.EN_REVISION, ScheduleState.VALIDE),
+    ScheduleState.EN_REVISION: (ScheduleState.VALIDE,),
+    ScheduleState.VALIDE: (ScheduleState.PUBLIE, ScheduleState.EN_REVISION),
+    ScheduleState.PUBLIE: (ScheduleState.REMPLACE,),
+    ScheduleState.REMPLACE: (),
+}
+
+
+class ImmutableVersionError(PlanningError):
+    """Tentative de modifier une version figée."""
+
+
+def assert_version_mutable(version: ScheduleVersion, operation: str) -> None:
+    """Refuse toute écriture sur une version qui n'est plus modifiable.
+
+    Point unique de contrôle, appelé par le service : les couches interface et
+    API héritent donc du même comportement, sans duplication contournable.
+    """
+    if version is None:
+        raise PlanningError("Version de planning introuvable.")
+    if version.state not in ETATS_MODIFIABLES:
+        raise ImmutableVersionError(
+            f"Opération « {operation} » refusée : la version {version.version_no} "
+            f"est en état {version.state.value} et n'est plus modifiable. "
+            "Toute correction doit créer une nouvelle version."
+        )
+
+
+def assert_transition_allowed(
+    version: ScheduleVersion, cible: ScheduleState
+) -> None:
+    """Refuse toute transition d'état non prévue, notamment PUBLIE -> VALIDE."""
+    autorisees = TRANSITIONS_AUTORISEES.get(version.state, ())
+    if cible not in autorisees:
+        raise ImmutableVersionError(
+            f"Transition {version.state.value} → {cible.value} interdite. "
+            + (
+                "Une version publiée ne peut jamais revenir en arrière : "
+                "créez une nouvelle version."
+                if version.state is ScheduleState.PUBLIE
+                else f"Transitions possibles depuis {version.state.value} : "
+                + (", ".join(e.value for e in autorisees) or "aucune")
+            )
+        )
+
+
 def set_lock(
     session: Session, version: ScheduleVersion, post_id: int, locked: bool, admin: User
 ) -> Assignment:
+    assert_version_mutable(version, "verrouillage d'une affectation")
     assignment = session.execute(
         select(Assignment).where(
             Assignment.schedule_version_id == version.id, Assignment.post_id == post_id
@@ -378,6 +434,7 @@ def regenerate_keeping_locks(
 
 
 def validate_version(session: Session, version: ScheduleVersion, admin: User) -> ScheduleVersion:
+    assert_transition_allowed(version, ScheduleState.VALIDE)
     missing = _missing_posts(session, version)
     if missing:
         raise PlanningError(
@@ -412,6 +469,7 @@ def publish_version(
     """
     if version.state is not ScheduleState.VALIDE:
         raise PlanningError("Seule une version validée peut être publiée.")
+    assert_transition_allowed(version, ScheduleState.PUBLIE)
 
     previous = list(
         session.execute(

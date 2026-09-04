@@ -23,8 +23,13 @@ BASE_DIR = Path(__file__).resolve().parent
 
 
 def create_app() -> FastAPI:
-    demo = envsvc.is_demonstration()
-    deployed = envsvc.is_deployed()
+    # Fail-closed : une valeur d'environnement inconnue arrête l'application ici,
+    # avec un message lisible, plutôt que de retomber sur « démonstration ».
+    try:
+        demo = envsvc.is_demonstration()
+        deployed = envsvc.is_deployed()
+    except envsvc.EnvironmentError_ as exc:
+        raise SystemExit(f"Démarrage refusé : {exc}") from None
     app = FastAPI(
         title=settings.app_name,
         description=(

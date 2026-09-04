@@ -224,6 +224,21 @@ def require_administrative_access(session: Session, user: User | None) -> None:
         )
 
 
+def require_line_supervision(session: Session, user: User | None, line: str) -> None:
+    """Garde **métier** du périmètre de ligne.
+
+    Appelée par le service, donc par tous les chemins d'appel à la fois :
+    interface web, API JSON et scripts. Un contrôle posé uniquement dans une
+    couche de présentation serait contournable par l'autre.
+    """
+    require_administrative_access(session, user)
+    if not supervises_line(session, user, line):
+        raise PermissionError_(
+            f"Cette opération porte sur la ligne {line}. Elle relève du "
+            f"responsable des gardes de cette ligne ou du chef de service."
+        )
+
+
 def matrix(session: Session, user: User) -> list[LignePermission]:
     """Vue lisible des six permissions pour un compte donné."""
     jour = Clock.now().date()

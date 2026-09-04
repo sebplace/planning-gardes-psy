@@ -843,23 +843,18 @@ def handover_advance(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not permission_service.has_administrative_access(session, user):
-        raise HTTPException(403, ACCES_ADMIN_REFUSE)
     demande = session.get(HandoverRequest, request_id)
     if demande is None:
         raise HTTPException(404, "Demande de reprise introuvable.")
-    # Périmètre de ligne : c'est ce qui distingue concrètement les trois
-    # fonctions administratives les unes des autres.
-    ligne = demande.assignment.post.line.value
-    if not permission_service.supervises_line(session, user, ligne):
-        raise HTTPException(
-            403,
-            f"Cette reprise porte sur la ligne {ligne}. Elle relève du responsable "
-            "de cette ligne ou du chef de service.",
-        )
     try:
-        handover_service.advance(session, demande)
+        # Même garde métier que l'API : le contrôle vit dans le service.
+        handover_service.advance(
+            session, demande, actor=user, enforce_permissions=True
+        )
         session.commit()
+    except handover_service.HandoverPermissionError as exc:
+        session.rollback()
+        raise HTTPException(403, str(exc)) from None
     except handover_service.HandoverError as exc:
         session.rollback()
         flash(request, "erreur", str(exc))

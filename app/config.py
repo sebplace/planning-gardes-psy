@@ -17,6 +17,10 @@ class Settings(BaseSettings):
 
     app_name: str = "Planification des gardes psychiatriques"
     environment: str = "demonstration"
+    #: Bases explicitement déclarées exclusivement fictives, séparées par des
+    #: virgules. Complète l'allowlist intégrée. Une opération destructive n'est
+    #: possible que sur une base de cette liste.
+    demo_database_allowlist: str = ""
     # SQLite par défaut : la démonstration locale tourne sans serveur de base.
     database_url: str = f"sqlite:///{(BASE_DIR / 'gardes.db').as_posix()}"
     secret_key: str = "prototype-demo-non-secret-a-remplacer-en-production"
