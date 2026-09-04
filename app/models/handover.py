@@ -19,6 +19,8 @@ from .base import (
     Base,
     CandidacyState,
     HandoverState,
+    SwapCandidateState,
+    SwapSearchState,
     SwapState,
     TimestampMixin,
     WaveKind,
@@ -198,3 +200,92 @@ class SwapProposal(Base, TimestampMixin):
 
     assignment_a = relationship("Assignment", foreign_keys=[assignment_a_id])
     assignment_b = relationship("Assignment", foreign_keys=[assignment_b_id])
+
+
+class SwapSearch(Base, TimestampMixin):
+    """Recherche d'échange ouverte **à partir d'une seule garde à céder**.
+
+    Lot B du contre-audit du 04/09/2026 : le parcours nominal ne demande plus à
+    la personne de désigner un collègue ni une garde de contrepartie. Elle
+    déclare vouloir céder **sa** garde ; l'application cherche, sollicite,
+    collecte, classe et officialise.
+
+    ``seed_commitment`` est l'empreinte de la graine, enregistrée **au gel de la
+    liste** : elle est donc prouvablement antérieure au classement et au tirage
+    éventuel.
+    """
+
+    __tablename__ = "swap_searches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("assignments.id"), nullable=False)
+    requester_profile_id: Mapped[int] = mapped_column(
+        ForeignKey("professional_profiles.id"), nullable=False
+    )
+    comment: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    state: Mapped[SwapSearchState] = enum_column(
+        SwapSearchState, nullable=False, default=SwapSearchState.BROUILLON
+    )
+    opens_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    closes_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    window_label: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    urgent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    frozen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    list_hash: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    seed_commitment: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    solicited_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    retained_proposal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("swap_proposals.id"), nullable=True
+    )
+    ranking_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    draw_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outcome_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    row_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    assignment = relationship("Assignment", foreign_keys=[assignment_id])
+    requester = relationship("ProfessionalProfile", foreign_keys=[requester_profile_id])
+    retained_proposal = relationship("SwapProposal", foreign_keys=[retained_proposal_id])
+    candidates: Mapped[list["SwapCandidate"]] = relationship(
+        back_populates="search", cascade="all, delete-orphan"
+    )
+
+    @property
+    def is_open(self) -> bool:
+        return self.state in (
+            SwapSearchState.BROUILLON,
+            SwapSearchState.COLLECTE,
+            SwapSearchState.LISTE_FIGEE,
+        )
+
+
+class SwapCandidate(Base, TimestampMixin):
+    """Partenaire sollicité dans une recherche d'échange.
+
+    Un couple (personne, garde de contrepartie) : la même personne peut détenir
+    plusieurs gardes reprenables, chacune donnant une permutation différente,
+    donc un classement différent.
+    """
+
+    __tablename__ = "swap_candidates"
+    __table_args__ = (
+        UniqueConstraint("search_id", "assignment_id", name="uq_swap_candidate"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    search_id: Mapped[int] = mapped_column(ForeignKey("swap_searches.id"), nullable=False)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("professional_profiles.id"), nullable=False
+    )
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("assignments.id"), nullable=False)
+    state: Mapped[SwapCandidateState] = enum_column(
+        SwapCandidateState, nullable=False, default=SwapCandidateState.SOLLICITE
+    )
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    exclusion_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    ranking_key_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    search: Mapped[SwapSearch] = relationship(back_populates="candidates")
+    profile = relationship("ProfessionalProfile")
+    assignment = relationship("Assignment", foreign_keys=[assignment_id])
+

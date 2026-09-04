@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block titre %}Détail d'une recherche d'échange{% endblock %}
+{% block contenu %}
+<h1>Recherche d'échange {{ recherche.id }}</h1>
+
+<div class="carte">
+  <p>
+    Garde cédée le
+    <strong>{{ format_date_fr(recherche.assignment.post.occurrence.local_date) }}</strong>
+    — {{ recherche.assignment.post.occurrence.garde_type.label }},
+    {{ recherche.assignment.post.line.value }}<br>
+    État : <span class="etiquette neutre">{{ recherche.state.value }}</span><br>
+    Titulaire actuel : <strong>{{ recherche.assignment.profile.code }}</strong>
+    <span class="aide">(la garde reste à sa charge tant qu'aucun échange n'est officialisé)</span><br>
+    Fenêtre : {{ recherche.window_label or '—' }}
+    {% if recherche.closes_at %}, clôture le {{ format_local(recherche.closes_at) }}{% endif %}
+    {% if recherche.urgent %} · <span class="etiquette rouge">circuit urgent</span>{% endif %}<br>
+    Commentaire :
+    {% if details %}{{ recherche.comment or '—' }}
+    {% else %}<span class="etiquette neutre">réservé au demandeur et aux responsables compétents</span>{% endif %}
+  </p>
+  <p class="aide">{{ contrat_anonymat }}</p>
+  {% if recherche.outcome_reason %}
+  <p class="alerte">{{ recherche.outcome_reason }}</p>
+  {% endif %}
+</div>
+
+{% if miennes %}
+<div class="carte">
+  <h2>Ma réponse</h2>
+  {% for candidat in miennes %}
+  <p>
+    Votre garde du
+    <strong>{{ format_date_fr(candidat.assignment.post.occurrence.local_date) }}</strong>
+    — état : <span class="etiquette neutre">{{ candidat.state.value }}</span>
+  </p>
+  {% if recherche.state.value == 'COLLECTE' %}
+  <form method="post" action="/echanges/{{ recherche.id }}/reponse">
+    <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+    <input type="hidden" name="candidat_id" value="{{ candidat.id }}">
+    <button type="submit" name="reponse" value="favorable">J'accepte cet échange</button>
+    <button type="submit" name="reponse" value="refus" class="secondaire">Je refuse</button>
+  </form>
+  <p class="aide">
+    Un accord n'est pas une attribution : toutes les réponses positives sont classées
+    à la clôture. Répondre plus vite ne procure aucun avantage.
+  </p>
+  {% endif %}
+  {% if candidat.exclusion_reason %}
+  <p class="aide">{{ candidat.exclusion_reason }}</p>
+  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="carte">
+  <h2>Partenaires sollicités</h2>
+  {% if recherche.candidates %}
+  <ul>
+    {% for candidat in recherche.candidates %}
+    <li>
+      {% if details or (profile and candidat.profile_id == profile.id) %}
+        {{ candidat.profile.code }}
+      {% else %}<span class="aide">partenaire sollicité</span>{% endif %}
+      — garde du {{ candidat.assignment.post.occurrence.local_date }}
+      — <span class="etiquette neutre">{{ candidat.state.value }}</span>
+      {% if candidat.exclusion_reason and (details or (profile and candidat.profile_id == profile.id)) %}
+      <br><span class="aide">{{ candidat.exclusion_reason }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="vide">Aucun partenaire sollicité.</p>{% endif %}
+</div>
+
+{% if recherche.frozen_at %}
+<div class="carte">
+  <h2>Gel de la liste</h2>
+  <p>
+    Liste figée le {{ format_local(recherche.frozen_at) }} ·
+    empreinte <code>{{ recherche.list_hash[:24] }}…</code> ·
+    engagement sur la graine <code>{{ recherche.seed_commitment[:24] }}…</code>
+  </p>
+  <p class="aide">
+    L'engagement est enregistré <strong>avant</strong> le classement : il est donc
+    prouvablement antérieur au résultat.
+  </p>
+</div>
+{% endif %}
+
+{% if details and classement and classement.classement %}
+<div class="carte">
+  <h2>Classement par maximin</h2>
+  <p class="aide">{{ classement.regle }}</p>
+  <div class="tableau-defilant">
+    <table>
+      <thead>
+        <tr><th scope="col">Rang</th><th scope="col">Partenaire</th>
+            <th scope="col">Garde reprise</th><th scope="col">Clé maximin</th></tr>
+      </thead>
+      <tbody>
+        {% for ligne in classement.classement %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ ligne.partenaire }}</td>
+          <td>{{ ligne.garde_reprise }}</td>
+          <td><code>{{ ligne.cle_maximin|join(', ') }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if classement.exclusions %}
+  <h3>Accords écartés à la revalidation</h3>
+  <ul>
+    {% for exclusion in classement.exclusions %}
+    <li><strong>{{ exclusion.partenaire }}</strong> — {{ exclusion.motif }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if tirage %}
+<div class="carte">
+  <h2>Tirage au sort</h2>
+  <p>{{ tirage.motif }}</p>
+  <details open>
+    <summary>Preuve vérifiable</summary>
+    <dl>
+      <dt>Algorithme</dt><dd><code>{{ tirage.algorithme }}</code></dd>
+      <dt>Candidats ex æquo</dt><dd><code>{{ tirage.candidats_ex_aequo|join(', ') }}</code></dd>
+      <dt>Engagement sur la graine</dt><dd><code>{{ tirage.engagement_graine }}</code></dd>
+      <dt>Graine révélée</dt><dd><code>{{ tirage.graine_revelee }}</code></dd>
+      <dt>HMAC</dt><dd><code>{{ tirage.hmac }}</code></dd>
+      <dt>Index retenu</dt><dd>{{ tirage.index }}</dd>
+      <dt>Vérification</dt><dd>{{ tirage.verification }}</dd>
+    </dl>
+  </details>
+</div>
+{% endif %}
+
+{% if recherche.is_open %}
+<div class="carte">
+  <form method="post" action="/echanges/{{ recherche.id }}/avancer">
+    <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+    <button type="submit" class="secondaire">
+      Faire progresser (clôture de la fenêtre, classement, officialisation)
+    </button>
+  </form>
+  <p class="aide">
+    Dans une exploitation réelle, cette progression serait déclenchée par une tâche
+    planifiée. Le bouton n'existe ici que pour rendre la démonstration observable.
+  </p>
+  {% if profile and recherche.requester_profile_id == profile.id %}
+  <form method="post" action="/echanges/{{ recherche.id }}/annuler">
+    <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+    <button type="submit" class="secondaire">Retirer ma demande</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

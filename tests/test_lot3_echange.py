@@ -31,6 +31,7 @@ from app.models import (
     AuditEvent,
     Color,
     ProfessionalProfile,
+    Status,
     SwapState,
 )
 from app.services import swap_search_service, swap_service
@@ -224,7 +225,76 @@ def _ma_garde(world, profil=None):
     if futures:
         premiere = futures[0]
         return premiere, session.get(ProfessionalProfile, premiere.profile_id)
-    pytest.skip("aucune garde future disponible")
+    raise AssertionError("l'univers de test doit contenir des gardes futures")
+
+
+# --------------------------------------------------------------------------- #
+# Scénario déterministe : trois seniors, une garde cédée, deux partenaires
+# --------------------------------------------------------------------------- #
+
+
+def scenario_deterministe(world, garde_supplementaire: bool):
+    """Réduit le planning publié à un jeu **maîtrisé**, pour ne rien sauter.
+
+    Le planning généré ne garantit ni le nombre de propositions ni l'existence
+    d'une égalité parfaite. On construit donc explicitement la situation :
+
+    * une garde cédée, tenue par le demandeur ;
+    * deux gardes de **même nature**, tenues par deux partenaires distincts ;
+    * toutes les autres affectations de la version sont retirées, pour que les
+      agendas ne créent aucun conflit parasite.
+
+    Avec ``garde_supplementaire``, le demandeur détient en plus une garde
+    intermédiaire : les quatre intervalles diffèrent alors d'une proposition à
+    l'autre et le classement est **strictement** ordonné. Sans elle, les quatre
+    intervalles valent « aucune contrainte » des deux côtés : c'est l'égalité
+    parfaite, seul cas où un tirage est permis.
+
+    Retourne ``(cedee, demandeur, [(garde, partenaire), ...])``.
+    """
+    session = world.session
+    version = publish_plan(world)
+    futures = [
+        a
+        for a in sorted(version.assignments, key=lambda a: a.post.occurrence.start_at)
+        if a.post.occurrence.start_at > Clock.now()
+    ]
+    trouve = None
+    for cedee in futures:
+        if cedee.post.required_status is not Status.SENIOR:
+            continue
+        jumelles = [
+            x
+            for x in futures
+            if x.id != cedee.id and swap_service.check_equivalence(cedee, x)[0]
+        ]
+        if len(jumelles) >= 3:
+            trouve = (cedee, jumelles)
+            break
+    assert trouve, "l'univers de test doit offrir une garde et trois jumelles"
+    cedee, jumelles = trouve
+    premiere, seconde, intermediaire = jumelles[0], jumelles[-1], jumelles[1]
+
+    garder = {cedee.id, premiere.id, seconde.id}
+    if garde_supplementaire:
+        garder.add(intermediaire.id)
+    for autre in list(version.assignments):
+        if autre.id not in garder:
+            session.delete(autre)
+    session.flush()
+
+    demandeur, un, deux = world.seniors[0], world.seniors[1], world.seniors[2]
+    cedee.profile_id = demandeur.id
+    premiere.profile_id = un.id
+    seconde.profile_id = deux.id
+    if garde_supplementaire:
+        intermediaire.profile_id = demandeur.id
+    session.flush()
+    for profil in (demandeur, un, deux):
+        for occurrence in world.occurrences:
+            world.set_color(profil, occurrence, Color.VERT)
+    session.flush()
+    return cedee, demandeur, [(premiere, un), (seconde, deux)]
 
 
 def test_la_recherche_n_ecrit_rien(world):
@@ -293,7 +363,7 @@ def _paire_de_meme_nature(world):
                     seconde,
                     session.get(ProfessionalProfile, seconde.profile_id),
                 )
-    pytest.skip("aucune paire de même nature dans cet univers")
+    raise AssertionError("l'univers de test doit offrir une paire de même nature")
 
 
 def test_un_partenaire_non_vert_est_ecarte(world):
@@ -403,40 +473,40 @@ def _scenario_controle(world):
             world.set_color(un, seconde.post.occurrence, Color.VERT)
             session.flush()
             return premiere, un, seconde, deux
-    pytest.skip("aucune paire échangeable dans cet univers")
+    raise AssertionError("l'univers de test doit offrir une paire échangeable")
 
 
 def test_un_echange_praticable_est_propose(world):
     session = world.session
-    premiere, un, seconde, deux = _scenario_controle(world)
-    resultat = swap_search_service.rechercher(session, premiere, un)
-    ids = [p.assignment_repris_id for p in resultat.propositions]
-    if seconde.id not in ids:
-        ecart = next(e for e in resultat.ecartes if e["garde"] == seconde.id)
-        pytest.skip(f"paire écartée pour une autre raison : {ecart['motif']}")
-    assert resultat.propositions
+    cedee, demandeur, partenaires = scenario_deterministe(
+        world, garde_supplementaire=False
+    )
+    resultat = swap_search_service.rechercher(session, cedee, demandeur)
+    ids = {p.assignment_repris_id for p in resultat.propositions}
+    assert ids == {garde.id for garde, _ in partenaires}
 
 
 def test_le_double_accord_officialise_l_echange(world):
     session = world.session
-    premiere, un, seconde, deux = _scenario_controle(world)
-    resultat = swap_search_service.rechercher(session, premiere, un)
-    if not any(p.assignment_repris_id == seconde.id for p in resultat.propositions):
-        pytest.skip("paire non retenue par la recherche")
+    cedee, demandeur, partenaires = scenario_deterministe(
+        world, garde_supplementaire=False
+    )
+    garde, partenaire = partenaires[0]
+    resultat = swap_search_service.rechercher(session, cedee, demandeur)
+    assert any(p.assignment_repris_id == garde.id for p in resultat.propositions)
 
-    proposition = swap_service.propose_swap(session, premiere, seconde, un)
+    proposition = swap_service.propose_swap(session, cedee, garde, demandeur)
     assert proposition.state is SwapState.PROPOSE
     # Un seul accord ne suffit pas.
     assert proposition.accepted_a_at is None or proposition.accepted_b_at is None
 
-    swap_service.accept_swap(session, proposition, deux)
+    swap_service.accept_swap(session, proposition, partenaire)
     session.refresh(proposition)
-    assert proposition.state in (SwapState.OFFICIEL, SwapState.REFUSE)
-    if proposition.state is SwapState.OFFICIEL:
-        session.refresh(premiere)
-        session.refresh(seconde)
-        assert premiere.profile_id == deux.id
-        assert seconde.profile_id == un.id
+    assert proposition.state is SwapState.OFFICIEL, proposition.refusal_reason
+    session.refresh(cedee)
+    session.refresh(garde)
+    assert cedee.profile_id == partenaire.id
+    assert garde.profile_id == demandeur.id
 
 
 def test_le_resultat_documente_la_regle_de_classement(world):
@@ -450,13 +520,20 @@ def test_le_resultat_documente_la_regle_de_classement(world):
 
 
 def test_les_propositions_sont_ordonnees_par_maximin(world):
-    publish_plan(world)
-    affectation, titulaire = _ma_garde(world)
-    resultat = swap_search_service.rechercher(world.session, affectation, titulaire)
-    if len(resultat.propositions) < 2:
-        pytest.skip("pas assez de propositions pour vérifier l'ordre")
+    """Ordre **strict**, sur un jeu de données suffisant et maîtrisé.
+
+    Aucun saut : le scénario garantit deux propositions dont les quatre
+    intervalles diffèrent réellement.
+    """
+    session = world.session
+    cedee, demandeur, _ = scenario_deterministe(world, garde_supplementaire=True)
+    resultat = swap_search_service.rechercher(session, cedee, demandeur)
+    assert len(resultat.propositions) >= 2, resultat.ecartes
     cles = [tuple(p.cle_maximin) for p in resultat.propositions]
     assert cles == sorted(cles, reverse=True)
+    # Les clés ne sont pas toutes identiques : l'ordre est réellement éprouvé.
+    assert len(set(cles)) > 1
+    assert len(resultat.ex_aequo) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -465,45 +542,35 @@ def test_les_propositions_sont_ordonnees_par_maximin(world):
 
 
 def test_sans_egalite_aucun_tirage(world):
-    publish_plan(world)
-    affectation, titulaire = _ma_garde(world)
-    resultat = swap_search_service.rechercher(world.session, affectation, titulaire)
-    if not resultat.propositions:
-        pytest.skip("aucune proposition")
-    if len(resultat.ex_aequo) > 1:
-        pytest.skip("égalité parfaite dans cet univers")
-    retenue, preuve = swap_search_service.departager(
-        world.session, resultat, titulaire
-    )
+    session = world.session
+    cedee, demandeur, _ = scenario_deterministe(world, garde_supplementaire=True)
+    resultat = swap_search_service.rechercher(session, cedee, demandeur)
+    assert resultat.propositions
+    assert len(resultat.ex_aequo) == 1
+    retenue, preuve = swap_search_service.departager(session, resultat, demandeur)
     assert retenue is resultat.meilleure
     assert preuve is None
 
 
 def test_en_egalite_parfaite_le_tirage_est_auditable(world):
-    """Construit une égalité parfaite, pour ne pas dépendre du hasard du planning."""
-    session = world.session
-    publish_plan(world)
-    affectation, titulaire = _ma_garde(world)
-    resultat = swap_search_service.rechercher(session, affectation, titulaire)
-    if len(resultat.propositions) < 2:
-        pytest.skip("pas assez de propositions")
+    """Égalité parfaite **réelle**, produite par le scénario, non simulée.
 
-    # Deux propositions strictement à égalité, forcées pour le test.
-    a, b = resultat.propositions[0], resultat.propositions[1]
-    b.cle_maximin = list(a.cle_maximin)
-    egalite = swap_search_service.ResultatRecherche(
-        fenetre=resultat.fenetre,
-        propositions=[a, b],
-        ecartes=[],
-        ex_aequo=sorted(
-            [
-                f"{a.assignment_cede_id}<->{a.assignment_repris_id}",
-                f"{b.assignment_cede_id}<->{b.assignment_repris_id}",
-            ]
-        ),
+    Sans garde supplémentaire, les quatre intervalles valent « aucune
+    contrainte » des deux côtés pour les deux propositions : l'égalité est
+    parfaite et le tirage est alors le seul départage licite.
+    """
+    session = world.session
+    cedee, demandeur, partenaires = scenario_deterministe(
+        world, garde_supplementaire=False
     )
-    retenue, preuve = swap_search_service.departager(session, egalite, titulaire)
-    assert retenue in (a, b)
+    resultat = swap_search_service.rechercher(session, cedee, demandeur)
+    assert len(resultat.propositions) == 2
+    cles = {tuple(p.cle_maximin) for p in resultat.propositions}
+    assert len(cles) == 1, "les deux propositions doivent être strictement à égalité"
+    assert len(resultat.ex_aequo) == 2
+
+    retenue, preuve = swap_search_service.departager(session, resultat, demandeur)
+    assert retenue in resultat.propositions
     assert preuve is not None
     import hashlib
 
@@ -544,25 +611,23 @@ def test_le_tirage_est_reproductible_a_graine_donnee():
 def test_le_parcours_conforme_n_appelle_aucun_responsable(world):
     """Deux accords suffisent : aucun administrateur n'intervient."""
     session = world.session
-    publish_plan(world)
-    affectation, titulaire = _ma_garde(world)
+    cedee, demandeur, _ = scenario_deterministe(world, garde_supplementaire=True)
 
     proposition, resultat, _ = swap_search_service.proposer_le_meilleur(
-        session, affectation, titulaire
+        session, cedee, demandeur
     )
-    if proposition is None:
-        pytest.skip("aucune solution dans cet univers")
+    assert proposition is not None, resultat.ecartes
     assert proposition.state is SwapState.PROPOSE
 
     partenaire_id = (
         proposition.assignment_b.profile_id
-        if titulaire.id == proposition.assignment_a.profile_id
+        if demandeur.id == proposition.assignment_a.profile_id
         else proposition.assignment_a.profile_id
     )
     partenaire = session.get(ProfessionalProfile, partenaire_id)
     swap_service.accept_swap(session, proposition, partenaire)
     session.refresh(proposition)
-    assert proposition.state in (SwapState.OFFICIEL, SwapState.REFUSE)
+    assert proposition.state is SwapState.OFFICIEL, proposition.refusal_reason
 
     # Aucun événement d'audit n'a été produit par un administrateur.
     evenements = [
@@ -576,13 +641,11 @@ def test_le_parcours_conforme_n_appelle_aucun_responsable(world):
 
 def test_un_commentaire_reste_facultatif(world):
     session = world.session
-    publish_plan(world)
-    affectation, titulaire = _ma_garde(world)
-    proposition, _, _ = swap_search_service.proposer_le_meilleur(
-        session, affectation, titulaire, commentaire=None
+    cedee, demandeur, _ = scenario_deterministe(world, garde_supplementaire=True)
+    proposition, resultat, _ = swap_search_service.proposer_le_meilleur(
+        session, cedee, demandeur, commentaire=None
     )
-    if proposition is None:
-        pytest.skip("aucune solution")
+    assert proposition is not None, resultat.ecartes
     assert proposition.id is not None
 
 

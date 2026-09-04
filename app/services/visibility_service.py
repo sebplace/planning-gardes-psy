@@ -31,6 +31,7 @@ from ..models import (
     ScheduleState,
     ScheduleVersion,
     SwapProposal,
+    SwapSearch,
     User,
     WaveSolicitation,
 )
@@ -257,3 +258,57 @@ def echanges_visibles(session: Session, user: User | None) -> list[SwapProposal]
         ).scalars()
     )
     return [p for p in toutes if echange_lisible(session, user, p)]
+
+
+# --------------------------------------------------------------------------- #
+# Recherches d'échange (parcours nominal, lot B)
+# --------------------------------------------------------------------------- #
+
+
+def recherche_lisible(
+    session: Session, user: User | None, search: SwapSearch | None
+) -> bool:
+    if user is None or search is None:
+        return False
+    if permission_service.has_administrative_access(session, user):
+        return True
+    profile_id = _profile_id_of(session, user)
+    if profile_id is None:
+        return False
+    if profile_id == search.requester_profile_id:
+        return True
+    return any(c.profile_id == profile_id for c in search.candidates)
+
+
+def assert_recherche_lisible(
+    session: Session, user: User | None, search: SwapSearch | None
+) -> SwapSearch:
+    if not recherche_lisible(session, user, search):
+        raise RessourceInvisible()
+    return search
+
+
+def details_recherche_visibles(
+    session: Session, user: User | None, search: SwapSearch | None
+) -> bool:
+    """Commentaire, classement complet et exclusions nominatives.
+
+    Réservés au demandeur et au responsable compétent sur la ligne de la garde
+    cédée. Un partenaire sollicité voit sa propre proposition, pas le détail des
+    autres.
+    """
+    if user is None or search is None:
+        return False
+    if _supervise(session, user, search.assignment.post.line.value):
+        return True
+    profile_id = _profile_id_of(session, user)
+    return profile_id is not None and profile_id == search.requester_profile_id
+
+
+def recherches_visibles(session: Session, user: User | None) -> list[SwapSearch]:
+    if user is None:
+        return []
+    toutes = list(
+        session.execute(select(SwapSearch).order_by(SwapSearch.id.desc())).scalars()
+    )
+    return [s for s in toutes if recherche_lisible(session, user, s)]

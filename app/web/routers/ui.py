@@ -39,7 +39,10 @@ from ...models import (
     ScheduleState,
     ScheduleVersion,
     Submission,
+    SwapCandidate,
     SwapProposal,
+    SwapSearch,
+    SwapSearchState,
     User,
     WaveSolicitation,
     WaveState,
@@ -57,6 +60,8 @@ from ...services import (
     projection_service,
     quota_service,
     security,
+    swap_flow_service,
+    swap_search_service,
     swap_service,
     visibility_service,
 )
@@ -929,55 +934,166 @@ def swaps(
     user: User | None = Depends(optional_user),
     session: Session = Depends(get_session),
 ):
+    """Parcours nominal : je pars de **ma** garde, sans choisir de collègue."""
     _require(user)
     profile = profile_of(session, user)
-    # Filtrage côté serveur : on ne liste que les échanges dont la personne est
-    # partie prenante, ou ceux de la ligne qu'elle supervise.
+    recherches = visibility_service.recherches_visibles(session, user)
     propositions = visibility_service.echanges_visibles(session, user)
     mes_gardes = []
-    autres_gardes = []
+    sollicitations = []
     if profile is not None:
-        rows = session.execute(
+        mes_gardes = session.execute(
             select(Assignment, CoveragePost, GardeOccurrence)
             .join(CoveragePost, Assignment.post_id == CoveragePost.id)
             .join(GardeOccurrence, CoveragePost.occurrence_id == GardeOccurrence.id)
             .join(ScheduleVersion, Assignment.schedule_version_id == ScheduleVersion.id)
             .where(
+                Assignment.profile_id == profile.id,
                 ScheduleVersion.state == ScheduleState.PUBLIE,
                 GardeOccurrence.start_at > Clock.now(),
             )
             .order_by(GardeOccurrence.start_at)
         ).all()
-        mes_gardes = [r for r in rows if r[0].profile_id == profile.id]
-        autres_gardes = [r for r in rows if r[0].profile_id != profile.id]
+        sollicitations = swap_flow_service.sollicitations_de(session, profile)
     return render(request, "echanges.html", user, "echanges",
-                  propositions=propositions, mes_gardes=mes_gardes,
-                  autres_gardes=autres_gardes, profile=profile)
+                  recherches=recherches, propositions=propositions,
+                  mes_gardes=mes_gardes, sollicitations=sollicitations,
+                  profile=profile)
 
 
-@router.post("/echanges/proposer", response_class=HTMLResponse)
-def propose_swap_ui(
+@router.post("/echanges/rechercher", response_class=HTMLResponse)
+def search_swap_ui(
     request: Request,
-    assignment_a_id: int = Form(...),
-    assignment_b_id: int = Form(...),
+    assignment_id: int = Form(...),
+    commentaire: str = Form(""),
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+):
+    """Ouverture d'une recherche à partir de la seule garde à céder."""
+    _require(user)
+    profile = profil_medecin_de(session, user)
+    assignment = session.get(Assignment, assignment_id)
+    try:
+        recherche = swap_flow_service.ouvrir(
+            session, assignment, profile, commentaire=commentaire
+        )
+        swap_flow_service.avancer(session, recherche)
+        session.commit()
+        if recherche.state is SwapSearchState.SANS_SOLUTION:
+            flash(request, "alerte", recherche.outcome_reason or
+                  "Aucun échange praticable n'a été trouvé.")
+        else:
+            flash(request, "succes",
+                  f"Recherche ouverte : {recherche.solicited_count} partenaire(s) "
+                  "sollicité(s) simultanément. Ni votre nom ni votre motif ne "
+                  "leur sont communiqués, et répondre plus vite ne procure aucun "
+                  "avantage.")
+    except swap_flow_service.SwapFlowError as exc:
+        session.rollback()
+        flash(request, "erreur", str(exc))
+    except swap_search_service.SwapSearchError as exc:
+        session.rollback()
+        flash(request, "erreur", str(exc))
+    return RedirectResponse("/echanges", status_code=303)
+
+
+@router.get("/echanges/{search_id}", response_class=HTMLResponse)
+def swap_search_detail(
+    search_id: int,
+    request: Request,
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+):
+    _require(user)
+    recherche = session.get(SwapSearch, search_id)
+    visibility_service.assert_recherche_lisible(session, user, recherche)
+    details = visibility_service.details_recherche_visibles(session, user, recherche)
+    profile = profile_of(session, user)
+    classement = json.loads(recherche.ranking_json or "{}")
+    tirage = json.loads(recherche.draw_json) if recherche.draw_json else None
+    miennes = [
+        c for c in recherche.candidates
+        if profile is not None and c.profile_id == profile.id
+    ]
+    return render(request, "echange_detail.html", user, "echanges",
+                  recherche=recherche, details=details, profile=profile,
+                  classement=classement, tirage=tirage, miennes=miennes,
+                  contrat_anonymat=visibility_service.CONTRAT_ANONYMAT)
+
+
+@router.post("/echanges/{search_id}/reponse", response_class=HTMLResponse)
+def swap_search_response(
+    search_id: int,
+    request: Request,
+    candidat_id: int = Form(...),
+    reponse: str = Form(...),
     user: User | None = Depends(optional_user),
     session: Session = Depends(get_session),
 ):
     _require(user)
     profile = profil_medecin_de(session, user)
-    a = session.get(Assignment, assignment_a_id)
-    b = session.get(Assignment, assignment_b_id)
+    recherche = session.get(SwapSearch, search_id)
+    visibility_service.assert_recherche_lisible(session, user, recherche)
+    candidat = session.get(SwapCandidate, candidat_id)
+    if candidat is None or candidat.search_id != recherche.id:
+        raise visibility_service.RessourceInvisible()
     try:
-        proposal = swap_service.propose_swap(session, a, b, profile)
+        swap_flow_service.repondre(
+            session, recherche, profile,
+            favorable=(reponse == "favorable"),
+            assignment_id=candidat.assignment_id,
+        )
+        swap_flow_service.avancer(session, recherche)
         session.commit()
-        if proposal.refusal_reason:
-            flash(request, "alerte", proposal.refusal_reason)
-        else:
-            flash(request, "succes", "Proposition envoyée. L'échange devient officiel "
-                                     "au second accord, après revérification des deux côtés.")
-    except swap_service.SwapError as exc:
+        flash(request, "succes" if reponse == "favorable" else "info",
+              "Accord enregistré. Toutes les réponses positives sont classées à la "
+              "clôture : répondre plus vite ne procure aucun avantage."
+              if reponse == "favorable" else "Refus enregistré.")
+    except swap_flow_service.SwapFlowError as exc:
         session.rollback()
         flash(request, "erreur", str(exc))
+    return RedirectResponse(f"/echanges/{search_id}", status_code=303)
+
+
+@router.post("/echanges/{search_id}/avancer", response_class=HTMLResponse)
+def swap_search_advance(
+    search_id: int,
+    request: Request,
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+):
+    """Progression observable. Dans une exploitation réelle : tâche planifiée."""
+    _require(user)
+    recherche = session.get(SwapSearch, search_id)
+    visibility_service.assert_recherche_lisible(session, user, recherche)
+    try:
+        swap_flow_service.avancer(session, recherche)
+        session.commit()
+    except swap_flow_service.SwapFlowError as exc:
+        session.rollback()
+        flash(request, "erreur", str(exc))
+    return RedirectResponse(f"/echanges/{search_id}", status_code=303)
+
+
+@router.post("/echanges/{search_id}/annuler", response_class=HTMLResponse)
+def swap_search_cancel(
+    search_id: int,
+    request: Request,
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+):
+    _require(user)
+    profile = profil_medecin_de(session, user)
+    recherche = session.get(SwapSearch, search_id)
+    visibility_service.assert_recherche_lisible(session, user, recherche)
+    if recherche.requester_profile_id != profile.id:
+        raise HTTPException(403, "Seul l'auteur d'une recherche peut la retirer.")
+    if swap_flow_service.annuler(session, recherche, actor=user):
+        session.commit()
+        flash(request, "info", "Recherche retirée. Votre garde reste inchangée.")
+    else:
+        session.rollback()
+        flash(request, "erreur", "Cette recherche n'est plus annulable.")
     return RedirectResponse("/echanges", status_code=303)
 
 
@@ -988,6 +1104,11 @@ def accept_swap_ui(
     user: User | None = Depends(optional_user),
     session: Session = Depends(get_session),
 ):
+    """Accord sur une permutation déjà identifiée.
+
+    Ce n'est **pas** le parcours nominal : il subsiste pour les propositions
+    créées hors recherche, notamment par les jeux de démonstration.
+    """
     _require(user)
     profile = profil_medecin_de(session, user)
     proposal = session.get(SwapProposal, swap_id)

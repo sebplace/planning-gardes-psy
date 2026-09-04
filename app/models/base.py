@@ -143,6 +143,35 @@ class SwapState(str, Enum):
     EXPIRE = "EXPIRE"
 
 
+class SwapSearchState(str, Enum):
+    """Cycle de vie d'une **recherche** d'échange (lot B du 04/09/2026).
+
+    À ne pas confondre avec ``SwapState``, qui décrit une permutation précise
+    déjà identifiée. Une recherche part d'une seule garde à céder et ne connaît
+    ni partenaire ni garde de contrepartie au moment de son ouverture.
+    """
+
+    BROUILLON = "BROUILLON"
+    COLLECTE = "COLLECTE"
+    LISTE_FIGEE = "LISTE_FIGEE"
+    OFFICIALISEE = "OFFICIALISEE"
+    SANS_SOLUTION = "SANS_SOLUTION"
+    ANNULEE = "ANNULEE"
+    EXPIREE = "EXPIREE"
+
+
+class SwapCandidateState(str, Enum):
+    """État d'un partenaire sollicité dans une recherche d'échange."""
+
+    SOLLICITE = "SOLLICITE"
+    FAVORABLE = "FAVORABLE"
+    REFUS = "REFUS"
+    RETIRE = "RETIRE"
+    EXCLU = "EXCLU"
+    RETENU = "RETENU"
+    NON_RETENU = "NON_RETENU"
+
+
 class EngineRunStatus(str, Enum):
     EN_COURS = "EN_COURS"
     TERMINEE = "TERMINEE"

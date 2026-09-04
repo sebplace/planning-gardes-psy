@@ -1,35 +1,60 @@
 {% extends "base.html" %}
 {% block titre %}Échanges{% endblock %}
 {% block contenu %}
-<h1>Échange bilatéral de gardes</h1>
+<h1>Échange de gardes</h1>
 
 <div class="carte">
-  <p>
-    Un échange n'est autorisé qu'entre <strong>deux gardes structurellement
-    équivalentes</strong> : même ligne, même catégorie comptable, même poids de décompte,
-    même classe d'échange validée, même classe de durée et mêmes exigences de couverture.
-  </p>
-  <p class="aide">
-    Au second accord, le système revérifie séparément pour chacun des deux médecins la
-    couleur actuelle, l'éligibilité, les conflits, le repos et l'activité du compte.
-    Si tout est satisfait, l'échange devient immédiatement officiel et les compteurs
-    restent inchangés. Sinon, il est refusé avec une explication : chaque médecin peut
-    alors ouvrir volontairement une demande de reprise, jamais déclenchée automatiquement.
-  </p>
+  <h2>Comment fonctionne un échange</h2>
+  <ol>
+    <li>Vous partez de <strong>votre propre garde</strong>. Vous n'avez ni collègue
+        ni garde de contrepartie à désigner, et aucun motif à exposer.</li>
+    <li>L'application cherche, dans le <strong>même trimestre</strong>, les collègues
+        explicitement verts à votre date qui détiennent une garde de même nature que
+        vous pouvez reprendre. L'éligibilité est vérifiée séparément dans les deux sens.</li>
+    <li>Tous les partenaires possibles sont sollicités <strong>en même temps</strong>.
+        <strong>Répondre plus vite ne procure aucun avantage.</strong></li>
+    <li>À la clôture, seules les réponses positives sont retenues, puis classées par
+        <strong>maximin</strong> sur les quatre intervalles avant et après les nouvelles
+        gardes, trimestres voisins compris. Un tirage auditable ne départage qu'en cas
+        d'<strong>égalité parfaite</strong>.</li>
+    <li>Les deux accords étant explicites, les deux gardes sont revalidées
+        <strong>atomiquement</strong> puis l'échange devient officiel, exactement une fois.</li>
+    <li>Sans solution, votre garde reste à votre charge et vous en êtes averti·e.
+        Aucun responsable n'intervient dans un parcours conforme.</li>
+  </ol>
   <p class="hypothese">
     Catalogue des classes considérées comme de même nature : hypothèse de démonstration
     (OPEN_QUESTIONS.md Q-12).
   </p>
 </div>
 
-{% if mes_gardes and autres_gardes %}
+{% if sollicitations %}
 <div class="carte">
-  <h2>Proposer un échange</h2>
-  <form method="post" action="/echanges/proposer">
-  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+  <h2>Échanges qui vous sont proposés</h2>
+  <ul>
+    {% for candidat in sollicitations %}
+    <li>
+      Votre garde du
+      <strong>{{ format_date_fr(candidat.assignment.post.occurrence.local_date) }}</strong>
+      contre celle du
+      <strong>{{ format_date_fr(candidat.search.assignment.post.occurrence.local_date) }}</strong>
+      — {{ candidat.search.assignment.post.line.value }},
+      fenêtre jusqu'au {{ format_local(candidat.search.closes_at) }}
+      · <a href="/echanges/{{ candidat.search_id }}">Répondre</a>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if mes_gardes %}
+<div class="carte">
+  <h2>Demander un échange pour une de mes gardes</h2>
+  <form method="post" action="/echanges/rechercher">
+    <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
     <p>
-      <label for="a">Ma garde</label>
-      <select id="a" name="assignment_a_id" required>
+      <label for="assignment_id">Garde à céder</label>
+      <select id="assignment_id" name="assignment_id" required>
         {% for assignment, post, occurrence in mes_gardes %}
         <option value="{{ assignment.id }}">
           {{ occurrence.local_date }} — {{ occurrence.garde_type.label }} — {{ post.line.value }}
@@ -38,24 +63,59 @@
       </select>
     </p>
     <p>
-      <label for="b">Garde souhaitée</label>
-      <select id="b" name="assignment_b_id" required>
-        {% for assignment, post, occurrence in autres_gardes %}
-        <option value="{{ assignment.id }}">
-          {{ occurrence.local_date }} — {{ occurrence.garde_type.label }} —
-          {{ post.line.value }} — {{ assignment.profile.code }}
-        </option>
-        {% endfor %}
-      </select>
+      <label for="commentaire">Commentaire (facultatif)</label>
+      <input type="text" id="commentaire" name="commentaire" maxlength="300" size="50">
+      <span class="aide">
+        Aucun motif n'est exigé et rien n'est communiqué aux partenaires.
+        Ne pas encoder d'information concernant un patient.
+      </span>
     </p>
-    <button type="submit">Proposer l'échange</button>
+    <button type="submit">Chercher un échange</button>
   </form>
 </div>
 {% endif %}
 
 <div class="carte">
-  <h2>Propositions</h2>
-  {% if propositions %}
+  <h2>Mes recherches et celles qui me concernent</h2>
+  {% if recherches %}
+  <div class="tableau-defilant">
+    <table>
+      <thead>
+        <tr><th scope="col">#</th><th scope="col">Garde cédée</th><th scope="col">Ligne</th>
+            <th scope="col">Titulaire</th><th scope="col">Sollicités</th>
+            <th scope="col">État</th><th scope="col"></th></tr>
+      </thead>
+      <tbody>
+        {% for recherche in recherches %}
+        <tr>
+          <td>{{ recherche.id }}</td>
+          <td>{{ recherche.assignment.post.occurrence.local_date }}</td>
+          <td>{{ recherche.assignment.post.line.value }}</td>
+          <td>{{ recherche.assignment.profile.code }}</td>
+          <td>{{ recherche.solicited_count }}</td>
+          <td>
+            <span class="etiquette {{ 'vert' if recherche.state.value == 'OFFICIALISEE'
+                                      else 'rouge' if recherche.state.value == 'SANS_SOLUTION'
+                                      else 'neutre' }}">
+              {{ recherche.state.value }}
+            </span>
+          </td>
+          <td><a href="/echanges/{{ recherche.id }}">Détail</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p class="vide">Aucune recherche d'échange.</p>{% endif %}
+</div>
+
+{% if propositions %}
+<div class="carte">
+  <h2>Permutations déjà identifiées</h2>
+  <p class="aide">
+    Ces propositions portent sur deux gardes précises. Ce n'est pas le parcours
+    nominal : elles proviennent d'une recherche aboutie ou d'un jeu de démonstration.
+  </p>
   <div class="tableau-defilant">
     <table>
       <thead>
@@ -83,7 +143,7 @@
                   and profile.id in [proposition.assignment_a.profile_id,
                                      proposition.assignment_b.profile_id] %}
             <form method="post" action="/echanges/{{ proposition.id }}/accepter">
-  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+              <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
               <button type="submit">Accepter</button>
             </form>
             {% else %}—{% endif %}
@@ -93,6 +153,6 @@
       </tbody>
     </table>
   </div>
-  {% else %}<p class="vide">Aucune proposition d'échange.</p>{% endif %}
 </div>
+{% endif %}
 {% endblock %}

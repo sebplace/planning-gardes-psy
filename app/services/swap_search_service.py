@@ -216,11 +216,19 @@ class ResultatRecherche:
 
 
 def rechercher(
-    session: Session, assignment: Assignment, demandeur: ProfessionalProfile
+    session: Session,
+    assignment: Assignment,
+    demandeur: ProfessionalProfile,
+    verrou_propre: str | None = None,
 ) -> ResultatRecherche:
     """Cherche, dans le trimestre, tous les échanges réellement praticables.
 
     Aucune écriture. Chaque candidat écarté l'est avec un motif explicite.
+
+    ``verrou_propre`` désigne le verrou déjà posé sur la garde cédée par
+    l'opération appelante : sans lui, une recherche lancée après la prise de
+    verrou s'écarterait elle-même en croyant que la garde participe à une autre
+    opération.
     """
     if assignment.profile_id != demandeur.id:
         raise SwapSearchError(
@@ -265,7 +273,8 @@ def rechercher(
     for autre in autres:
         partenaire = session.get(ProfessionalProfile, autre.profile_id)
         motif = _motif_d_ecart(
-            session, assignment, autre, demandeur, partenaire, occurrence_cedee
+            session, assignment, autre, demandeur, partenaire, occurrence_cedee,
+            verrou_propre=verrou_propre,
         )
         if motif is not None:
             ecartes.append(
@@ -344,6 +353,7 @@ def _motif_d_ecart(
     demandeur: ProfessionalProfile,
     partenaire: ProfessionalProfile,
     occurrence_cedee: GardeOccurrence,
+    verrou_propre: str | None = None,
 ) -> str | None:
     """Motif d'exclusion d'un candidat, ou ``None`` si l'échange est praticable."""
     # (a) Même nature, contrôlée par le service d'échange existant.
@@ -381,12 +391,17 @@ def _motif_d_ecart(
         )
 
     # (d) Aucune des deux gardes ne doit déjà participer à une autre opération.
+    #     Le verrou posé par l'opération appelante elle-même ne compte pas.
     for assignment, etiquette in ((cedee, "cédée"), (reprise, "proposée")):
-        if assignment.busy_operation is not None:
-            return (
-                f"La garde {etiquette} participe déjà à une autre opération "
-                f"({assignment.busy_operation})."
-            )
+        occupation = assignment.busy_operation
+        if occupation is None:
+            continue
+        if assignment.id == cedee.id and occupation == verrou_propre:
+            continue
+        return (
+            f"La garde {etiquette} participe déjà à une autre opération "
+            f"({occupation})."
+        )
     return None
 
 

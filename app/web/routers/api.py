@@ -26,6 +26,7 @@ from ...models import (
     Scenario,
     ScheduleVersion,
     SwapProposal,
+    SwapSearch,
     User,
     Year,
 )
@@ -40,6 +41,8 @@ from ...services import (
     projection_service,
     quota_service,
     security,
+    swap_flow_service,
+    swap_search_service,
     swap_service,
     visibility_service,
 )
@@ -518,6 +521,164 @@ def accept_swap(
         "etat": proposal.state.value,
         "motif_refus": proposal.refusal_reason,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Recherches d'échange — parcours nominal (lot B)
+# --------------------------------------------------------------------------- #
+
+
+class SwapSearchIn(BaseModel):
+    assignment_id: int
+    commentaire: str | None = None
+
+
+class SwapAnswerIn(BaseModel):
+    favorable: bool
+    assignment_id: int | None = None
+
+
+def _recherche_json(session: Session, search, details: bool) -> dict:
+    import json as _json
+
+    cedee = search.assignment.post.occurrence
+    return {
+        "recherche": search.id,
+        "etat": search.state.value,
+        "garde_cedee": search.assignment_id,
+        "date_cedee": cedee.local_date.isoformat(),
+        "ligne": search.assignment.post.line.value,
+        "titulaire_actuel": search.assignment.profile.code,
+        "demandeur": search.requester.code,
+        "commentaire": search.comment if details else None,
+        "fenetre": {
+            "palier": search.window_label,
+            "ouvre_a": search.opens_at.isoformat() if search.opens_at else None,
+            "ferme_a": search.closes_at.isoformat() if search.closes_at else None,
+            "circuit_urgent": search.urgent,
+        },
+        "sollicites": search.solicited_count,
+        "propositions": [
+            {
+                "id": c.id,
+                "partenaire": c.profile.code,
+                "garde_reprise": c.assignment_id,
+                "date_reprise": c.assignment.post.occurrence.local_date.isoformat(),
+                "etat": c.state.value,
+                "motif_exclusion": c.exclusion_reason if details else None,
+            }
+            for c in search.candidates
+        ],
+        "classement": _json.loads(search.ranking_json or "{}") if details else None,
+        "tirage": _json.loads(search.draw_json) if search.draw_json else None,
+        "resultat": search.outcome_reason,
+        "proposition_retenue": search.retained_proposal_id,
+        "contrat_anonymat": visibility_service.CONTRAT_ANONYMAT,
+        "regle": (
+            "Le parcours part d'une seule garde à céder. Tous les partenaires "
+            "éligibles sont sollicités simultanément ; à la clôture, seules les "
+            "réponses positives sont classées par maximin, et un tirage auditable "
+            "ne départage qu'en cas d'égalité parfaite."
+        ),
+    }
+
+
+@router.post("/swap-searches")
+def open_swap_search(
+    payload: SwapSearchIn,
+    profile: ProfessionalProfile = Depends(profile_medecin),
+    session: Session = Depends(get_session),
+):
+    """Parcours nominal : aucune garde de contrepartie n'est fournie."""
+    assignment = session.get(Assignment, payload.assignment_id)
+    if assignment is None:
+        raise HTTPException(404, "Affectation inconnue.")
+    try:
+        search = swap_flow_service.ouvrir(
+            session, assignment, profile, commentaire=payload.commentaire
+        )
+        swap_flow_service.avancer(session, search)
+    except (swap_flow_service.SwapFlowError, swap_search_service.SwapSearchError) as exc:
+        session.rollback()
+        raise HTTPException(400, str(exc))
+    session.commit()
+    session.refresh(search)
+    return _recherche_json(session, search, details=True)
+
+
+@router.get("/swap-searches/{search_id}")
+def swap_search_detail(
+    search_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    search = session.get(SwapSearch, search_id)
+    visibility_service.assert_recherche_lisible(session, user, search)
+    details = visibility_service.details_recherche_visibles(session, user, search)
+    return _recherche_json(session, search, details=details)
+
+
+@router.post("/swap-searches/{search_id}/reponse")
+def answer_swap_search(
+    search_id: int,
+    payload: SwapAnswerIn,
+    profile: ProfessionalProfile = Depends(profile_medecin),
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    search = session.get(SwapSearch, search_id)
+    visibility_service.assert_recherche_lisible(session, user, search)
+    try:
+        swap_flow_service.repondre(
+            session, search, profile,
+            favorable=payload.favorable, assignment_id=payload.assignment_id,
+        )
+        swap_flow_service.avancer(session, search)
+    except swap_flow_service.SwapFlowError as exc:
+        session.rollback()
+        raise HTTPException(409, str(exc))
+    session.commit()
+    session.refresh(search)
+    details = visibility_service.details_recherche_visibles(session, user, search)
+    return _recherche_json(session, search, details=details)
+
+
+@router.post("/swap-searches/{search_id}/advance")
+def advance_swap_search(
+    search_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    search = session.get(SwapSearch, search_id)
+    visibility_service.assert_recherche_lisible(session, user, search)
+    try:
+        swap_flow_service.avancer(session, search)
+    except swap_flow_service.SwapFlowError as exc:
+        session.rollback()
+        raise HTTPException(409, str(exc))
+    session.commit()
+    session.refresh(search)
+    details = visibility_service.details_recherche_visibles(session, user, search)
+    return _recherche_json(session, search, details=details)
+
+
+@router.post("/swap-searches/{search_id}/annuler")
+def cancel_swap_search(
+    search_id: int,
+    profile: ProfessionalProfile = Depends(profile_medecin),
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    search = session.get(SwapSearch, search_id)
+    visibility_service.assert_recherche_lisible(session, user, search)
+    if search.requester_profile_id != profile.id:
+        raise HTTPException(403, "Seul l'auteur d'une recherche peut la retirer.")
+    if not swap_flow_service.annuler(session, search, actor=user):
+        session.rollback()
+        raise HTTPException(409, "Cette recherche n'est plus annulable.")
+    session.commit()
+    session.refresh(search)
+    return _recherche_json(session, search, details=True)
 
 
 # --------------------------------------------------------------------------- #

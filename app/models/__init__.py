@@ -17,6 +17,8 @@ from .base import (  # noqa: F401
     ScheduleState,
     Status,
     SubmissionState,
+    SwapCandidateState,
+    SwapSearchState,
     SwapState,
     WaveKind,
     WaveState,
@@ -101,7 +103,9 @@ from .handover import (  # noqa: F401
     Draw,
     HandoverRequest,
     HandoverWave,
+    SwapCandidate,
     SwapProposal,
+    SwapSearch,
     WaveSolicitation,
 )
 from .common import AuditEvent, Notification, Scenario, ScenarioResult  # noqa: F401

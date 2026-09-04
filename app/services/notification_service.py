@@ -103,6 +103,29 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "Échange refusé — {date_a} / {date_b}",
         "L'échange a été refusé : {reason}",
     ),
+    "ECHANGE_SOLLICITATION": (
+        "Échange possible — votre garde du {date_reprise}",
+        "Une garde du {date_cedee} ({type_label}, {line}) cherche un échange "
+        "contre votre garde du {date_reprise}.\n"
+        "Fenêtre de réponse jusqu'au {closes_at} (palier : {palier}).\n"
+        "Tous les partenaires possibles sont sollicités en même temps : répondre "
+        "plus vite ne procure aucun avantage. Aucun motif n'est communiqué.",
+    ),
+    "ECHANGE_RECHERCHE_OFFICIELLE": (
+        "Échange officialisé — {date_cedee} contre {date_reprise}",
+        "L'échange est officiel après accord des deux parties et revalidation. "
+        "Les compteurs restent inchangés (gardes équivalentes).",
+    ),
+    "ECHANGE_NON_RETENU": (
+        "Échange du {date_cedee} — une autre solution a été retenue",
+        "Merci de votre accord. Le classement a retenu une autre permutation. "
+        "Votre garde reste inchangée.",
+    ),
+    "ECHANGE_SANS_SOLUTION": (
+        "Échange sans solution — garde du {date_cedee}",
+        "Aucun échange praticable n'a abouti : {reason}\n"
+        "Votre garde reste à votre charge.",
+    ),
 }
 
 
