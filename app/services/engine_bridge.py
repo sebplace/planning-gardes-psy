@@ -25,6 +25,7 @@ from ..engine import (
     ExemptionIn,
     Line,
     MonthlyCapIn,
+    PeriodQuotaIn,
     PersonIn,
     PostIn,
     QuotaIn,
@@ -46,6 +47,7 @@ from ..models import (
     GardeOccurrence,
     GardeType,
     MonthlyCap,
+    PeriodQuota,
     ProfessionalProfile,
     Quarter,
     QuotaAdjustment,
@@ -161,6 +163,70 @@ def monthly_caps_for_year(session: Session, year_id: int) -> list[MonthlyCapIn]:
             )
         )
     return out
+
+
+def period_quotas_for_scope(
+    session: Session, debut: date, fin: date
+) -> list[PeriodQuotaIn]:
+    """Quotas de période dont la fenêtre recoupe l'intervalle demandé.
+
+    Tous sont transmis au moteur, y compris les non opposables, afin que
+    l'instantané d'exécution garde la trace de ce qui existait.
+    """
+    out: list[PeriodQuotaIn] = []
+    for row in session.execute(
+        select(PeriodQuota).where(
+            PeriodQuota.start_date <= fin, PeriodQuota.end_date >= debut
+        )
+    ).scalars():
+        out.append(
+            PeriodQuotaIn(
+                code=row.code,
+                label=row.label,
+                start_date=row.start_date,
+                end_date=row.end_date,
+                profile_id=row.profile_id,
+                status=row.status,
+                target=row.target,
+                maximum=row.maximum,
+                enforcement=row.enforcement,
+                institutionally_validated=row.institutionally_validated,
+            )
+        )
+    return out
+
+
+def prior_period_load(
+    session: Session, quotas: list[PeriodQuotaIn], quarter: Quarter
+) -> dict[int, float]:
+    """Charge déjà publiée sur les périodes concernées, **hors** trimestre courant.
+
+    Sans cela, un quota couvrant plusieurs trimestres repartirait de zéro à
+    chaque génération, ce qui le rendrait inopérant.
+    """
+    if not quotas:
+        return {}
+    debut = min(q.start_date for q in quotas)
+    fin = max(q.end_date for q in quotas)
+
+    rows = session.execute(
+        select(Assignment.profile_id, GardeType.count_weight)
+        .join(CoveragePost, Assignment.post_id == CoveragePost.id)
+        .join(GardeOccurrence, CoveragePost.occurrence_id == GardeOccurrence.id)
+        .join(GardeType, GardeOccurrence.garde_type_id == GardeType.id)
+        .join(ScheduleVersion, Assignment.schedule_version_id == ScheduleVersion.id)
+        .where(
+            ScheduleVersion.state == ScheduleState.PUBLIE,
+            GardeOccurrence.quarter_id != quarter.id,
+            GardeOccurrence.local_date >= debut,
+            GardeOccurrence.local_date <= fin,
+        )
+    ).all()
+
+    out: dict[int, float] = defaultdict(float)
+    for profile_id, weight in rows:
+        out[profile_id] += float(weight)
+    return dict(out)
 
 
 def continuous_duty_rule(
@@ -335,6 +401,9 @@ def build_input(
     )
     profiles = list(session.execute(select(ProfessionalProfile)).scalars())
     ref_day = quarter.start_date
+    quotas_periode = period_quotas_for_scope(
+        session, quarter.start_date, quarter.end_date
+    )
     return EngineInput(
         posts=[to_post(p) for p in posts],
         people=[to_person(session, p, ref_day) for p in profiles],
@@ -343,6 +412,8 @@ def build_input(
         exemptions=exemptions(session),
         rest_rules=rest_rules(session),
         monthly_caps=monthly_caps_for_year(session, quarter.year_id),
+        period_quotas=quotas_periode,
+        prior_period_load=prior_period_load(session, quotas_periode, quarter),
         continuous_duty=continuous_duty_rule(session),
         busy_intervals=busy_intervals(session, quarter),
         locked=locked or {},
@@ -409,6 +480,13 @@ def check_assignment(
             continue
         held_posts.append(to_post(held_post))
 
+    # Quotas de période : dans ce chemin, toutes les gardes déjà détenues par la
+    # personne sont chargées explicitement en état (y compris celles des autres
+    # trimestres publiés). La charge antérieure est donc déjà comptée, et
+    # ``prior_period_load`` doit rester vide pour ne pas la compter deux fois.
+    bornes = [target_post.local_date] + [p.local_date for p in held_posts]
+    quotas_periode = period_quotas_for_scope(session, min(bornes), max(bornes))
+
     inp = EngineInput(
         posts=[target_post] + held_posts,
         people=[person],
@@ -418,6 +496,8 @@ def check_assignment(
         exemptions=exemptions(session),
         rest_rules=rest_rules(session),
         monthly_caps=monthly_caps_for_year(session, quarter.year_id),
+        period_quotas=quotas_periode,
+        prior_period_load={},
         continuous_duty=continuous_duty_rule(session),
         busy_intervals=[],
         prior_load=prior_load(session, quarter.year_id, quarter.id),

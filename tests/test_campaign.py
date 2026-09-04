@@ -15,6 +15,8 @@ from app.models import (
     AvailabilitySource,
     CampaignState,
     Color,
+    GardeOccurrence,
+    GardeType,
     HandoverState,
     HolidayRequirement,
     Notification,
@@ -242,48 +244,75 @@ def test_38_validation_tardive_et_prolongation(world):
 
 
 def _creer_paire(world):
+    """Paire fictive dont chaque membre porte un vrai jour férié.
+
+    L'obligation porte désormais sur le **jour férié** lui-même : les occurrences
+    concernées doivent donc être du type ``JOUR_FERIE``.
+    """
+    session = world.session
     debut = world.quarter.start_date
-    return catalog_service.create_holiday_pair(
-        world.session,
-        "PAIRE_TEST",
-        "Paire fictive de test",
-        [
-            ("Premier membre", debut + timedelta(days=2), debut + timedelta(days=3)),
-            ("Second membre", debut + timedelta(days=10), debut + timedelta(days=11)),
-        ],
+    membres = [
+        ("Premier membre", debut + timedelta(days=2), debut + timedelta(days=3)),
+        ("Second membre", debut + timedelta(days=10), debut + timedelta(days=11)),
+    ]
+    paire = catalog_service.create_holiday_pair(
+        session, "PAIRE_TEST", "Paire fictive de test", membres
     )
+    ferie = session.execute(
+        select(GardeType).where(GardeType.code == "JOUR_FERIE")
+    ).scalar_one()
+    # Le second jour de chaque membre devient le jour férié effectif.
+    for _label, _d1, jour_ferie in membres:
+        occurrence = session.execute(
+            select(GardeOccurrence).where(GardeOccurrence.local_date == jour_ferie)
+        ).scalar_one()
+        occurrence.garde_type_id = ferie.id
+    session.flush()
+    return paire
 
 
-def test_09_paires_feriees_controlees(world):
+def test_09_paires_feriees_le_jour_ferie_doit_etre_vert(world):
+    """Règle confirmée le 04/09/2026 : le jour férié choisi doit être vert déclaré."""
     session = world.session
     paire = _creer_paire(world)
     cible = world.seniors[0]
 
-    # Rouge sur les deux membres : la paire n'est pas couverte.
+    # Rouge partout : la paire n'est pas couverte.
     for membre in paire.members:
         for occurrence in catalog_service.occurrences_for_member(session, membre):
             world.set_color(cible, occurrence, Color.ROUGE)
-
     manquantes = campaign_service.missing_holiday_pairs(session, world.submission(cible))
     assert manquantes and "Paire fictive de test" in manquantes[0]
-    with pytest.raises(campaign_service.CampaignError) as exc:
+    with pytest.raises(campaign_service.CampaignError):
         campaign_service.validate_submission(session, world.submission(cible))
-    assert "Paire fictive de test" in str(exc.value)
 
-    # Un orange sur un seul membre suffit avec l'exigence VERT_ORANGE.
+    # Un orange sur le jour férié ne suffit **pas**.
     membre = paire.members[0]
-    occurrence = catalog_service.occurrences_for_member(session, membre)[0]
-    world.set_color(cible, occurrence, Color.ORANGE)
+    jour_ferie = next(
+        o
+        for o in catalog_service.occurrences_for_member(session, membre)
+        if o.garde_type.code == "JOUR_FERIE"
+    )
+    world.set_color(cible, jour_ferie, Color.ORANGE)
+    assert campaign_service.missing_holiday_pairs(session, world.submission(cible))
+
+    # Une veille verte seule ne suffit pas davantage.
+    veille = next(
+        o
+        for o in catalog_service.occurrences_for_member(session, membre)
+        if o.garde_type.code != "JOUR_FERIE"
+    )
+    world.set_color(cible, veille, Color.VERT)
+    assert campaign_service.missing_holiday_pairs(session, world.submission(cible))
+
+    # Un vert déclaré sur le jour férié satisfait l'obligation.
+    world.set_color(cible, jour_ferie, Color.VERT)
     assert campaign_service.missing_holiday_pairs(session, world.submission(cible)) == []
     campaign_service.validate_submission(session, world.submission(cible))
 
-    # Avec l'exigence VERT seul, l'orange ne suffit plus.
-    world.campaign.holiday_pair_requirement = HolidayRequirement.VERT
-    session.flush()
-    assert campaign_service.missing_holiday_pairs(session, world.submission(cible))
 
-
-def test_39_dispo_par_defaut_compte_pour_paire_et_vague_verte(world):
+def test_39_dispo_par_defaut_ne_couvre_pas_une_paire(world):
+    """La disponibilité par défaut ne satisfait aucune obligation de paire."""
     session = world.session
     _creer_paire(world)
     non_repondant = world.seniors[3]
@@ -292,7 +321,7 @@ def test_39_dispo_par_defaut_compte_pour_paire_et_vague_verte(world):
     ).delete()
     session.flush()
 
-    # Pendant la saisie volontaire, aucune couleur déclarée : la paire est manquante.
+    # Aucune couleur déclarée : la paire est manquante.
     assert campaign_service.missing_holiday_pairs(
         session, world.submission(non_repondant)
     )
@@ -305,11 +334,12 @@ def test_39_dispo_par_defaut_compte_pour_paire_et_vague_verte(world):
     Clock.freeze(world.campaign.grace_deadline + timedelta(hours=1))
     campaign_service.apply_default_availability(session, world.campaign, world.admin)
 
-    # Après conversion régulière, la disponibilité par défaut couvre la paire…
+    # Après conversion régulière, la disponibilité par défaut ne couvre **pas**
+    # la paire : seul un vert déclaré sur le jour férié satisfait l'obligation.
     assert campaign_service.missing_holiday_pairs(
         session, world.submission(non_repondant), include_default=True
-    ) == []
-    # …sans jamais être présentée comme une réponse volontaire.
+    )
+    # …et elle n'est jamais présentée comme une réponse volontaire.
     entree = session.execute(
         select(Availability).where(
             Availability.submission_id == world.submission(non_repondant).id

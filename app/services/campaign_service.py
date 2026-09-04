@@ -17,12 +17,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import (
+    ActivityPeriod,
     Availability,
     AvailabilitySource,
     Campaign,
     CampaignState,
     Color,
     GardeOccurrence,
+    GardeType,
     HolidayPair,
     HolidayRequirement,
     Line,
@@ -34,6 +36,10 @@ from ..models import (
 )
 from . import audit_service, notification_service
 from .clock import Clock, format_date_fr
+
+#: Code du type de garde « jour férié ». L'obligation de paire porte sur ce type,
+#: la veille restant facultative.
+CODE_JOUR_FERIE = "JOUR_FERIE"
 
 
 class CampaignError(Exception):
@@ -53,7 +59,7 @@ def create_campaign(
     admin: User | None = None,
     grace_period_hours: int = 48,
     requirement: HolidayRequirement = HolidayRequirement.VERT_ORANGE,
-    reminder_offsets_days: str = "30,14,7,2",
+    reminder_offsets_days: str = "14,7,2",
 ) -> Campaign:
     campaign = Campaign(
         quarter_id=quarter.id,
@@ -98,7 +104,7 @@ def open_campaign(session: Session, campaign: Campaign, admin: User | None = Non
                 "deadline": campaign.deadline_at.strftime("%d/%m/%Y %H:%M"),
             },
         )
-        submission.last_reminder_index = 0
+        submission.last_reminder_index = -1
     audit_service.record(
         session, "CAMPAGNE_OUVERTE", "campaign", campaign.id,
         {"submissions": len(campaign.submissions)}, actor=admin,
@@ -250,6 +256,11 @@ def set_availability_range(
 
 
 def _sufficient(color: Color, requirement: HolidayRequirement) -> bool:
+    """Historique : conservé pour la compatibilité des écrans existants.
+
+    L'obligation métier réelle est désormais portée par
+    ``missing_holiday_pairs`` : **le jour férié choisi doit être vert déclaré**.
+    """
     if requirement is HolidayRequirement.VERT:
         return color in (Color.VERT, Color.DISPO_DEFAUT)
     return color in (Color.VERT, Color.ORANGE, Color.DISPO_DEFAUT)
@@ -266,21 +277,51 @@ def applicable_pairs(session: Session, campaign: Campaign) -> list[HolidayPair]:
     return out
 
 
+def _periodes_d_activite(session: Session, profile_id: int) -> list[ActivityPeriod]:
+    return list(
+        session.execute(
+            select(ActivityPeriod).where(ActivityPeriod.profile_id == profile_id)
+        ).scalars()
+    )
+
+
+def _actif_sur(periodes: list[ActivityPeriod], jour) -> bool:
+    for periode in periodes:
+        if periode.start_date and jour < periode.start_date:
+            continue
+        if periode.end_date and jour > periode.end_date:
+            continue
+        return True
+    return not periodes
+
+
 def missing_holiday_pairs(
     session: Session, submission: Submission, include_default: bool = False
 ) -> list[str]:
-    """Paires pour lesquelles aucune disponibilité suffisante n'est déclarée.
+    """Paires de jours fériés non couvertes par cette personne.
 
-    Pendant la saisie volontaire, seules les couleurs **déclarées** comptent.
-    Après l'échéance et l'application régulière du mécanisme de non-réponse,
-    ``DISPO_DEFAUT`` compte également (``include_default=True``), tout en restant
-    distinct d'un vert déclaré dans les écrans, exports et journaux.
+    Règle confirmée par le client le 04/09/2026 (lot 2, point 3) :
+
+    * l'obligation s'applique **aux seniors seulement** ;
+    * dans chaque paire applicable, **le jour férié choisi doit être vert
+      déclaré**. Orange, ``DISPO_DEFAUT`` ou une veille seule ne suffisent pas ;
+    * une paire située **hors période d'activité** n'est pas exigée ;
+    * la veille reste **facultative** par défaut.
+
+    ``include_default`` n'assouplit plus la couleur exigée sur le jour férié : il
+    reste réservé aux écrans de suivi antérieurs et n'a plus d'effet ici.
     """
     campaign = submission.campaign
-    requirement = campaign.holiday_pair_requirement
     quarter = campaign.quarter
+
+    profile = session.get(ProfessionalProfile, submission.profile_id)
+    if profile is None or profile.status is not Status.SENIOR:
+        # Non étendu aux assistants (arbitrage du 03/09/2026, reconfirmé le 04).
+        return []
+
+    periodes = _periodes_d_activite(session, profile.id)
     entries = {
-        (a.occurrence_id): a
+        a.occurrence_id: a
         for a in session.execute(
             select(Availability).where(Availability.submission_id == submission.id)
         ).scalars()
@@ -289,34 +330,45 @@ def missing_holiday_pairs(
 
     for pair in applicable_pairs(session, campaign):
         satisfied = False
-        relevant_members = 0
+        membres_exigibles = 0
         for member in pair.members:
             if member.date_end < quarter.start_date or member.date_start > quarter.end_date:
                 continue
-            relevant_members += 1
-            occurrences = session.execute(
-                select(GardeOccurrence).where(
-                    GardeOccurrence.local_date >= member.date_start,
-                    GardeOccurrence.local_date <= member.date_end,
-                )
-            ).scalars()
-            for occurrence in occurrences:
+            # Les jours fériés effectifs de ce membre, la veille étant facultative.
+            feries = list(
+                session.execute(
+                    select(GardeOccurrence)
+                    .join(GardeType, GardeOccurrence.garde_type_id == GardeType.id)
+                    .where(
+                        GardeOccurrence.local_date >= member.date_start,
+                        GardeOccurrence.local_date <= member.date_end,
+                        GardeOccurrence.quarter_id == quarter.id,
+                        GardeType.code == CODE_JOUR_FERIE,
+                    )
+                ).scalars()
+            )
+            if not feries:
+                continue
+            # Hors période d'activité : la paire n'est pas exigée pour ce membre.
+            if not any(_actif_sur(periodes, o.local_date) for o in feries):
+                continue
+            membres_exigibles += 1
+            for occurrence in feries:
                 entry = entries.get(occurrence.id)
                 if entry is None:
                     continue
-                if entry.color is Color.DISPO_DEFAUT and not include_default:
-                    continue
-                if _sufficient(entry.color, requirement):
+                # Seul un VERT explicitement déclaré satisfait l'obligation.
+                if entry.color is Color.VERT and entry.is_declared:
                     satisfied = True
                     break
             if satisfied:
                 break
-        if relevant_members and not satisfied:
+        if membres_exigibles and not satisfied:
             labels = " / ".join(m.label for m in pair.members)
             missing.append(
-                f"Paire « {pair.label} » ({labels}) : aucune disponibilité "
-                f"{'verte' if requirement is HolidayRequirement.VERT else 'verte ou orange'} "
-                "déclarée sur un des deux membres."
+                f"Paire « {pair.label} » ({labels}) : aucun jour férié déclaré "
+                "vert. Un orange, une disponibilité par défaut ou une veille "
+                "seule ne suffisent pas."
             )
     return missing
 
@@ -326,8 +378,64 @@ def missing_holiday_pairs(
 # --------------------------------------------------------------------------- #
 
 
+def occurrences_non_renseignees(
+    session: Session, submission: Submission
+) -> list[GardeOccurrence]:
+    """Occurrences du trimestre pour lesquelles la personne n'a rien déclaré.
+
+    Une occurrence hors de la période d'activité de la personne n'est pas
+    attendue : on ne peut pas exiger une réponse sur une date où elle n'exerce
+    pas.
+    """
+    campaign = submission.campaign
+    profile = session.get(ProfessionalProfile, submission.profile_id)
+    periodes = _periodes_d_activite(session, submission.profile_id)
+
+    declarees = {
+        a.occurrence_id
+        for a in session.execute(
+            select(Availability).where(
+                Availability.submission_id == submission.id,
+                Availability.is_declared.is_(True),
+            )
+        ).scalars()
+    }
+    manquantes = []
+    for occurrence in session.execute(
+        select(GardeOccurrence)
+        .where(GardeOccurrence.quarter_id == campaign.quarter_id)
+        .order_by(GardeOccurrence.local_date)
+    ).scalars():
+        if occurrence.id in declarees:
+            continue
+        if not _actif_sur(periodes, occurrence.local_date):
+            continue
+        if profile is not None and profile.status is Status.ASSISTANT:
+            # Un assistant ne couvre que la première ligne : une occurrence sans
+            # poste de première ligne ne lui est pas demandée.
+            if not any(p.line is Line.L1 for p in occurrence.posts):
+                continue
+        manquantes.append(occurrence)
+    return manquantes
+
+
 def validate_submission(session: Session, submission: Submission) -> Submission:
     _editable(submission)
+
+    # Politique explicite (lot 2, point 6 du contre-audit du 04/09/2026) :
+    # une réponse incomplète ne peut pas devenir finale. Elle serait ensuite
+    # ignorée par le mécanisme de non-réponse, qui ne traite que les réponses
+    # non finalisées, et les dates manquantes disparaîtraient silencieusement.
+    incompletes = occurrences_non_renseignees(session, submission)
+    if incompletes:
+        apercu = ", ".join(o.local_date.isoformat() for o in incompletes[:5])
+        suite = "…" if len(incompletes) > 5 else ""
+        raise CampaignError(
+            f"Validation refusée : {len(incompletes)} date(s) ne sont pas "
+            f"renseignées ({apercu}{suite}). Renseignez-les, ou demandez une "
+            "prolongation. Une réponse partielle ne peut pas devenir définitive."
+        )
+
     missing = missing_holiday_pairs(session, submission)
     if missing:
         raise CampaignError(
@@ -391,8 +499,14 @@ def due_reminders(campaign: Campaign, now: datetime) -> list[tuple[int, int]]:
 def send_due_reminders(session: Session, campaign: Campaign) -> int:
     """Envoie les rappels échus **uniquement aux non-finalisés**.
 
-    Idempotent : la clé métier contient la campagne, la personne, l'index de rappel
-    et le compteur de réouvertures.
+    Chaque entrée de ``reminder_offsets`` est un vrai rappel : le message
+    d'ouverture est envoyé séparément par ``open_campaign`` et ne consomme aucun
+    index. Une campagne déclarant un seul décalage envoie donc **exactement un**
+    rappel, ce qui est le cas de la campagne du premier trimestre (15/11).
+
+    Idempotent à deux niveaux : ``last_reminder_index`` empêche le renvoi lors
+    d'une nouvelle exécution, et la clé métier de la notification contient la
+    campagne, la personne, l'index et le compteur de réouvertures.
     """
     if campaign.state not in (CampaignState.OUVERTE, CampaignState.CLOTUREE,
                               CampaignState.RESOLUTION_NON_REPONDANTS):
@@ -400,8 +514,6 @@ def send_due_reminders(session: Session, campaign: Campaign) -> int:
     now = Clock.now()
     sent = 0
     for index, offset in due_reminders(campaign, now):
-        if index == 0:
-            continue  # J-30 = message d'ouverture, déjà envoyé
         for submission in campaign.submissions:
             if submission.is_finalised:
                 continue  # les rappels cessent après validation
@@ -427,12 +539,10 @@ def send_due_reminders(session: Session, campaign: Campaign) -> int:
 
 
 def all_reminders_sent(campaign: Campaign) -> bool:
-    last_index = len(campaign.reminder_offsets) - 1
-    if last_index <= 0:
+    offsets = campaign.reminder_offsets
+    if not offsets:
         return True
-    return Clock.now() >= campaign.deadline_at - timedelta(
-        days=campaign.reminder_offsets[last_index]
-    )
+    return Clock.now() >= campaign.deadline_at - timedelta(days=offsets[-1])
 
 
 # --------------------------------------------------------------------------- #

@@ -84,6 +84,7 @@ H_REPOS = "H09_REGLE_DE_REPOS_FERME"
 H_DOUBLE_POSTE = "H11_DEUX_POSTES_MEME_OCCURRENCE"
 H_PLAFOND_MENSUEL = "H12_PLAFOND_MENSUEL_FERME"
 H_DUREE_CONTINUE = "H13_DUREE_CONTINUE_MAXIMALE"
+H_QUOTA_PERIODE = "H14_QUOTA_DE_PERIODE_FERME"
 
 HARD_CONSTRAINT_LABELS: Mapping[str, str] = {
     H_ROUGE: "Indisponibilité rouge déclarée par la personne",
@@ -107,6 +108,10 @@ HARD_CONSTRAINT_LABELS: Mapping[str, str] = {
     H_DUREE_CONTINUE: (
         "Durée de service continu d'un assistant supérieure au maximum, sans "
         "demande explicite et datée de la personne"
+    ),
+    H_QUOTA_PERIODE: (
+        "Quota de période atteint (maximum chiffré, validé institutionnellement "
+        "et déclaré ferme)"
     ),
 }
 
@@ -258,6 +263,50 @@ class MonthlyCapIn:
 
 
 @dataclass(frozen=True)
+class PeriodQuotaIn:
+    """Quota portant sur une **période de dates de service**.
+
+    Rend le quota 57/68 des assistants réellement opposable au moteur, au lieu
+    d'un simple calcul de projection. La période est unique, à cheval sur deux
+    années civiles et sur plusieurs trimestres.
+
+    Comme le plafond mensuel, le maximum n'est opposable qu'après trois verrous
+    cumulés : chiffré, validé institutionnellement, déclaré ferme.
+    """
+
+    code: str
+    label: str
+    start_date: date
+    end_date: date  # incluse
+    profile_id: int | None = None
+    status: Status | None = None
+    target: float = 0.0
+    maximum: float | None = None
+    enforcement: Enforcement = Enforcement.SOUPLE
+    institutionally_validated: bool = False
+
+    @property
+    def is_enforceable(self) -> bool:
+        return (
+            self.maximum is not None
+            and self.maximum > 0
+            and self.institutionally_validated
+            and self.enforcement is Enforcement.FERME
+        )
+
+    def applies_to(self, person: PersonIn) -> bool:
+        if self.profile_id is not None:
+            return person.profile_id == self.profile_id
+        if self.status is not None:
+            return person.status is self.status
+        return False
+
+    def covers(self, date_de_service: date) -> bool:
+        """Rattachement par la date de **début** de service, jamais par la fin."""
+        return self.start_date <= date_de_service <= self.end_date
+
+
+@dataclass(frozen=True)
 class ContinuousDutyRuleIn:
     """Durée maximale de service **continu** planifié.
 
@@ -339,6 +388,10 @@ class EngineInput:
     exemptions: list[ExemptionIn] = field(default_factory=list)
     rest_rules: list[RestRuleIn] = field(default_factory=list)
     monthly_caps: list[MonthlyCapIn] = field(default_factory=list)
+    period_quotas: list[PeriodQuotaIn] = field(default_factory=list)
+    #: Charge déjà connue sur la période, hors du périmètre généré
+    #: (trimestres antérieurs publiés). Clé : profile_id.
+    prior_period_load: Mapping[int, float] = field(default_factory=dict)
     continuous_duty: ContinuousDutyRuleIn | None = None
     busy_intervals: list[BusyIntervalIn] = field(default_factory=list)
     incompatibilities: frozenset[tuple[int, int]] = frozenset()  # (profile_id, occurrence_id)
@@ -439,6 +492,20 @@ class EngineInput:
                     c.institutionally_validated,
                 )
                 for c in self.monthly_caps
+            ),
+            "period_quotas": sorted(
+                (
+                    q.code,
+                    q.profile_id if q.profile_id is not None else -1,
+                    q.status.value if q.status else "",
+                    q.start_date.isoformat(),
+                    q.end_date.isoformat(),
+                    q.target,
+                    q.maximum if q.maximum is not None else -1,
+                    q.enforcement.value,
+                    q.institutionally_validated,
+                )
+                for q in self.period_quotas
             ),
             "continuous_duty": (
                 [

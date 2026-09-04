@@ -66,6 +66,7 @@ from app.services import (  # noqa: E402
     catalog_service,
     counters_service,
     handover_service,
+    period_quota_service,
     permission_service,
     planning_service,
     projection_service,
@@ -448,6 +449,27 @@ def seed_quotas(session, year: Year, quarter: Quarter, people: dict, admin: User
     for alerte in quota_service.monthly_cap_alerts(session, year):
         print(f"    alerte plafond mensuel : {alerte}")
 
+    # Quota de période des assistants : la période est réelle et unique, mais le
+    # client n'a pas tranché entre 57 et 68. Le quota est donc enregistré comme
+    # cible **non opposable**, avec son alerte.
+    period_quota_service.set_period_quota(
+        session,
+        admin,
+        code=period_quota_service.CODE_QUOTA_ASSISTANTS,
+        label="Quota assistant sur la période 19/10/2026 - 03/10/2027",
+        start_date=period_quota_service.ASSISTANTS_DEBUT,
+        end_date=period_quota_service.ASSISTANTS_FIN,
+        target=57.0,
+        maximum=None,
+        status=Status.ASSISTANT,
+        comment=(
+            "Cible de simulation. Le client n'a pas tranché entre 57 et 68 : "
+            "aucun maximum n'est opposable tant que la valeur n'est pas validée."
+        ),
+    )
+    for alerte in period_quota_service.alerts(session):
+        print(f"    alerte quota de periode : {alerte}")
+
 
 # --------------------------------------------------------------------------- #
 # 2. Projections
@@ -579,7 +601,7 @@ def demo_campaign(session, quarter: Quarter, people: dict, admin: User) -> Campa
     )
     pairs_occurrences = _holiday_pair_occurrences(session, campaign)
 
-    Clock.freeze(CAMPAGNE_T1_RAPPEL)
+    Clock.freeze(CAMPAGNE_T1_RAPPEL.replace(hour=23, minute=59))
     sent = campaign_service.send_due_reminders(session, campaign)
     print(f"  rappel du 15/11 envoyé à {sent} personne(s) non finalisée(s)")
 
@@ -639,6 +661,10 @@ def demo_campaign(session, quarter: Quarter, people: dict, admin: User) -> Campa
 
 
 def _holiday_pair_occurrences(session, campaign: Campaign) -> list[set[int]]:
+    """Jours **fériés** de chaque paire applicable, la veille étant facultative.
+
+    L'obligation porte sur le jour férié lui-même : il doit être déclaré vert.
+    """
     out = []
     quarter = campaign.quarter
     for pair in campaign_service.applicable_pairs(session, campaign):
@@ -649,6 +675,7 @@ def _holiday_pair_occurrences(session, campaign: Campaign) -> list[set[int]]:
                 o.id
                 for o in catalog_service.occurrences_for_member(session, member)
                 if quarter.start_date <= o.local_date <= quarter.end_date
+                and o.garde_type.code == campaign_service.CODE_JOUR_FERIE
             }
             if ids:
                 out.append(ids)

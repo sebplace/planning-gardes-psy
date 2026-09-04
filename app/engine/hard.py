@@ -21,6 +21,7 @@ from .types import (
     H_NON_RENSEIGNE,
     H_ORANGE_L1,
     H_PLAFOND_MENSUEL,
+    H_QUOTA_PERIODE,
     H_REPOS,
     H_ROUGE,
     H_STATUT_POSTE,
@@ -174,6 +175,24 @@ def hard_violation(ctx: Context, state: State, post: PostIn, person: PersonIn) -
                 f"{rule.label} de {heures:.1f} h d'affilée, maximum "
                 f"{rule.max_hours:.1f} h pour un assistant. Aucune demande "
                 "explicite et datée de la personne pour ce bloc.",
+            )
+
+    # ---- H14 : quota de période ------------------------------------------- #
+    # Rend le quota 57/68 des assistants réellement opérationnel. La période est
+    # unique et à cheval sur deux années : le rattachement se fait sur la date de
+    # début de service, jamais sur la date de fin.
+    for quota in ctx.period_quotas_for(person):
+        if not quota.covers(post.local_date):
+            continue
+        current = state.count_in_period(
+            person.profile_id, quota.start_date, quota.end_date
+        )
+        if current + post.count_weight > quota.maximum + 1e-9:
+            return rej(
+                H_QUOTA_PERIODE,
+                f"{quota.label} : {current:.2f} + {post.count_weight:.2f} "
+                f"> {quota.maximum:.2f} sur la période "
+                f"{quota.start_date.isoformat()} → {quota.end_date.isoformat()}.",
             )
 
     return None

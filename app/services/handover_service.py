@@ -279,8 +279,92 @@ def eligible_profiles(
         )
         if rejection is not None:
             continue
+        # Contrôle **avant sollicitation** du bucket exact catégorie × ligne :
+        # on ne sollicite pas quelqu'un qui ne pourrait absorber la garde qu'en
+        # se surchargeant (lot 2, point 4).
+        if not reprise_simple_possible(session, profile, post):
+            continue
         out.append(profile)
     return sorted(out, key=lambda p: p.code)
+
+
+def bucket_solde(
+    session: Session, profile: ProfessionalProfile, post: CoveragePost
+) -> dict:
+    """Solde du bucket **exact** catégorie × ligne pour cette personne.
+
+    Lot 2, point 4 du contre-audit du 04/09/2026 : une reprise simple n'est
+    possible que si le volontaire a encore une garde à faire dans **ce** bucket
+    et sous les plafonds. Cible atteinte ou plafond atteint : pas de surcharge,
+    il faut chercher un échange équivalent.
+
+    Retourne un dictionnaire lisible, utilisable en explication comme en test.
+    """
+    from . import period_quota_service, quota_service
+
+    occurrence = post.occurrence
+    quarter = session.get(Quarter, occurrence.quarter_id)
+    year = session.get(Year, quarter.year_id)
+    category = session.get(QuotaCategory, occurrence.garde_type.category_id)
+    poids = occurrence.garde_type.count_weight
+
+    resume = quota_service.summary(session, profile, year)
+    ligne = next(
+        (
+            item
+            for item in resume.lines
+            if item.category_code == category.code and item.line == post.line.value
+        ),
+        None,
+    )
+    cible = ligne.target if ligne else 0.0
+    total = ligne.total if ligne else 0.0
+    maximum = ligne.maximum if ligne else None
+    maximum_ferme = bool(ligne and ligne.hard_maximum and ligne.maximum is not None)
+
+    sous_la_cible = total + poids <= cible + 1e-9
+    sous_le_maximum = (
+        True if not maximum_ferme else total + poids <= maximum + 1e-9
+    )
+
+    # Plafonds transversaux : mensuel et de période.
+    plafonds: list[str] = []
+    for cap in quota_service.monthly_caps(session, year):
+        if not cap.is_enforceable:
+            continue
+        vise = (
+            cap.profile_id == profile.id
+            if cap.profile_id is not None
+            else cap.status is profile.status
+        )
+        if vise:
+            plafonds.append(cap.label)
+    for suivi in period_quota_service.suivi(session, profile):
+        if suivi.opposable and suivi.debut <= occurrence.local_date <= suivi.fin:
+            if suivi.total + poids > (suivi.maximum or 0) + 1e-9:
+                plafonds.append(f"{suivi.label} (période)")
+
+    return {
+        "categorie": category.code,
+        "ligne": post.line.value,
+        "poids": poids,
+        "cible": round(cible, 3),
+        "total_actuel": round(total, 3),
+        "maximum_ferme": maximum if maximum_ferme else None,
+        "sous_la_cible": sous_la_cible,
+        "sous_le_maximum": sous_le_maximum,
+        "plafonds_atteints": plafonds,
+        "reprise_simple_possible": bool(
+            sous_la_cible and sous_le_maximum and not plafonds
+        ),
+    }
+
+
+def reprise_simple_possible(
+    session: Session, profile: ProfessionalProfile, post: CoveragePost
+) -> bool:
+    """Vrai si le volontaire peut absorber cette garde sans surcharge."""
+    return bool(bucket_solde(session, profile, post)["reprise_simple_possible"])
 
 
 def open_wave(session: Session, request: HandoverRequest, kind: WaveKind) -> HandoverWave:
@@ -609,6 +693,24 @@ def close_and_draw(session: Session, wave: HandoverWave) -> Draw | None:
             )
         elif occurrence.start_at <= Clock.now():
             reason = "La garde a commencé avant le tirage."
+        elif not reprise_simple_possible(session, profile, post):
+            # Second contrôle, au gel : la situation a pu changer depuis la
+            # sollicitation. Sans marge dans le bucket, pas de reprise simple.
+            solde = bucket_solde(session, profile, post)
+            if solde["plafonds_atteints"]:
+                reason = (
+                    "Plafond atteint : "
+                    + ", ".join(solde["plafonds_atteints"])
+                    + ". Une reprise simple créerait une surcharge ; un échange "
+                    "équivalent est nécessaire."
+                )
+            else:
+                reason = (
+                    f"Cible atteinte sur le bucket {solde['categorie']} × "
+                    f"{solde['ligne']} ({solde['total_actuel']:g} / "
+                    f"{solde['cible']:g}). Une reprise simple créerait une "
+                    "surcharge ; un échange équivalent est nécessaire."
+                )
         else:
             rejection = engine_bridge.check_assignment(
                 session, post, profile, ignore_assignment_ids={request.assignment_id}

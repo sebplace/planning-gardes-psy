@@ -39,7 +39,9 @@ class Settings(BaseSettings):
     # Valeurs de démonstration — voir OPEN_QUESTIONS.md
     default_grace_period_hours: int = 48  # Q-08
     default_holiday_pair_requirement: str = "VERT_ORANGE"  # Q-05
-    default_reminder_offsets_days: str = "30,14,7,2"  # §9.1
+    #: Décalages, en jours avant l'échéance, des **rappels**. Le message
+    #: d'ouverture est envoyé séparément et ne figure pas dans cette liste.
+    default_reminder_offsets_days: str = "14,7,2"  # §9.1
 
     @model_validator(mode="after")
     def _resolve_database_url(self) -> "Settings":

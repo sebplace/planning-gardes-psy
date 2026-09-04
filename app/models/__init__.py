@@ -58,6 +58,7 @@ from .rest import (  # noqa: F401
     RecoveryProposal,
     WeekendBlockRequest,
 )
+from .period_quota import PeriodQuota  # noqa: F401
 from .permissions import (  # noqa: F401
     CHEF_SERVICE,
     CONSULTATION_AUDIT,

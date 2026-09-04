@@ -16,6 +16,7 @@ from .types import (
     Line,
     MonthlyCapIn,
     PersonIn,
+    PeriodQuotaIn,
     PostIn,
     QuotaIn,
     RestRuleIn,
@@ -66,9 +67,17 @@ class Context:
         ]
         self.continuous_duty = inp.continuous_duty
 
+        # Quotas de période : seuls les opposables bloquent ; les autres restent
+        # informatifs et alimentent les alertes.
+        self.period_quotas: list[PeriodQuotaIn] = list(inp.period_quotas)
+        self.enforceable_period_quotas: list[PeriodQuotaIn] = [
+            q for q in self.period_quotas if q.is_enforceable
+        ]
+
         self.incompatibilities = set(inp.incompatibilities)
         self.locked = dict(inp.locked)
         self.prior_load = dict(inp.prior_load)
+        self.prior_period_load = dict(inp.prior_period_load)
 
         # Postes groupés par occurrence, utile pour le mode A/B et les doubles postes.
         self.posts_by_occurrence: dict[int, list[PostIn]] = defaultdict(list)
@@ -112,6 +121,10 @@ class Context:
     def monthly_caps_for(self, person: PersonIn) -> list[MonthlyCapIn]:
         """Plafonds mensuels **opposables** applicables à une personne."""
         return [c for c in self.enforceable_monthly_caps if c.applies_to(person)]
+
+    def period_quotas_for(self, person: PersonIn) -> list[PeriodQuotaIn]:
+        """Quotas de période **opposables** applicables à une personne."""
+        return [q for q in self.enforceable_period_quotas if q.applies_to(person)]
 
     def eligible_people_for(self, post: PostIn) -> list[PersonIn]:
         """Candidats potentiels, hors contraintes dépendant de l'état courant."""
@@ -247,6 +260,22 @@ class State:
             if heures > best_hours:
                 best_hours, best_days = heures, set(courant_jours)
         return best_hours, best_days
+
+    def count_in_period(
+        self, profile_id: int, debut: date, fin: date
+    ) -> float:
+        """Charge posée sur une période de **dates de service**, bornes incluses.
+
+        Inclut la charge antérieure connue hors du périmètre généré, transmise
+        par ``prior_period_load``, afin qu'un quota de période reste juste même
+        quand la période couvre plusieurs trimestres.
+        """
+        courant = sum(
+            p.count_weight
+            for p in self.by_person.get(profile_id, ())
+            if debut <= p.local_date <= fin
+        )
+        return courant + self.ctx.prior_period_load.get(profile_id, 0.0)
 
     def weekend_weeks(self, profile_id: int) -> list[tuple[int, int]]:
         weeks = {
