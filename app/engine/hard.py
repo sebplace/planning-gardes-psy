@@ -160,11 +160,11 @@ def hard_violation(ctx: Context, state: State, post: PostIn, person: PersonIn) -
             )
 
     # ---- H13 : durée de service continu ------------------------------------ #
-    # Le client interdit de dépasser 24 h d'affilée, tout en autorisant le
-    # week-end complet d'un assistant sur demande explicite et datée. La
-    # dérogation n'existe donc que si la personne l'a elle-même formulée.
+    # Portée restreinte aux assistants par le client le 04/09/2026. Pour un
+    # senior, aucun blocage supplémentaire n'est ajouté : les autres contraintes
+    # et la validation humaine habituelle restent applicables.
     rule = ctx.continuous_duty
-    if rule is not None:
+    if rule is not None and rule.applies_to(person):
         heures, jours = state.continuous_chain(person.profile_id, post)
         if heures > rule.max_hours + 1e-9 and not rule.has_request(
             person.profile_id, jours
@@ -172,8 +172,8 @@ def hard_violation(ctx: Context, state: State, post: PostIn, person: PersonIn) -
             return rej(
                 H_DUREE_CONTINUE,
                 f"{rule.label} de {heures:.1f} h d'affilée, maximum "
-                f"{rule.max_hours:.1f} h. Aucune demande explicite et datée de la "
-                "personne pour ce bloc.",
+                f"{rule.max_hours:.1f} h pour un assistant. Aucune demande "
+                "explicite et datée de la personne pour ce bloc.",
             )
 
     return None

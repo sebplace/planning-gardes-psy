@@ -224,33 +224,73 @@ def seed_people(session) -> dict:
 
     session.flush()
 
-    # Six permissions distinctes, déléguées à des médecins non administrateurs.
-    # Elles sont datées et journalisées, et n'ouvrent aucun autre droit.
-    delegations = [
-        (people["seniors"][1], permissions.RESP_L1, "Responsable de la première ligne"),
-        (people["seniors"][2], permissions.RESP_L2, "Responsable de la deuxième ligne"),
-        (people["seniors"][3], permissions.CHEF_SERVICE, "Chef de service"),
-        (people["seniors"][4], permissions.GESTION_COMPTES, "Gestion des comptes"),
-        (people["seniors"][5], permissions.PUBLICATION, "Publication du planning"),
-        (
-            people["seniors"][6],
-            permissions.CONSULTATION_AUDIT,
-            "Consultation du journal",
-        ),
+    # Trois fonctions ouvrant l'accès administratif (arbitrage du 04/09/2026) :
+    # responsable des gardes 1, responsable des gardes 2, chef de service. Elles
+    # sont attribuées séparément, datées et journalisées, et gardent des
+    # périmètres de ligne distincts.
+    fonctions = [
+        (people["seniors"][1], permissions.RESP_L1),
+        (people["seniors"][2], permissions.RESP_L2),
+        (people["seniors"][3], permissions.CHEF_SERVICE),
     ]
-    for profil, code, libelle in delegations:
+    # Trois permissions complémentaires, indépendantes des fonctions ci-dessus et
+    # qui n'ouvrent à elles seules aucun accès administratif.
+    complementaires = [
+        (people["seniors"][3], permissions.GESTION_COMPTES),
+        (people["seniors"][3], permissions.PUBLICATION),
+        (people["seniors"][4], permissions.CONSULTATION_AUDIT),
+    ]
+    for profil, code in fonctions + complementaires:
         permission_service.grant(
             session,
             session.get(User, profil.user_id),
             code,
             admin,
             start_date=PONDERATIONS_EFFET,
-            comment=f"Délégation fictive : {libelle}.",
+            comment=f"Attribution fictive : {permissions.LIBELLES[code]}.",
         )
     session.flush()
+
     print(
-        f"  {len(delegations)} permissions distinctes déléguées à des médecins "
-        "non administrateurs (datées et journalisées)"
+        "  fonctions administratives : "
+        + ", ".join(
+            f"{profil.code} = {permissions.LIBELLES[code]}"
+            for profil, code in fonctions
+        )
+    )
+    print(
+        "  permissions complementaires : "
+        + ", ".join(
+            f"{profil.code} = {permissions.LIBELLES[code]}"
+            for profil, code in complementaires
+        )
+    )
+    porteurs = [
+        f"{profil.code} ({permissions.LIGNES_SUPERVISEES[code][0]}"
+        + (f" et {permissions.LIGNES_SUPERVISEES[code][1]}"
+           if len(permissions.LIGNES_SUPERVISEES[code]) > 1 else "")
+        + ")"
+        for profil, code in fonctions
+    ]
+    medecins = people["seniors"] + people["assistants"]
+    avec_fonction = {profil.code for profil, _ in fonctions}
+    cumul_admin = {
+        p.code for p in medecins if session.get(User, p.user_id).is_admin
+    }
+    sans_acces = [
+        p.code
+        for p in medecins
+        if p.code not in avec_fonction and p.code not in cumul_admin
+    ]
+    print(
+        f"  acces administratif a partir du {PONDERATIONS_EFFET:%d/%m/%Y} : "
+        + ", ".join(porteurs)
+        + f" ; plus {', '.join(sorted(cumul_admin))} (cumul medecin/administrateur)"
+    )
+    print(
+        f"  {len(sans_acces)} medecin(s) sur {len(medecins)} restent non "
+        "administrateurs, dont les porteurs des trois permissions "
+        "complementaires ci-dessus"
     )
 
     print(

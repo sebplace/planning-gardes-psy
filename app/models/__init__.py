@@ -63,10 +63,12 @@ from .permissions import (  # noqa: F401
     CONSULTATION_AUDIT,
     GESTION_COMPTES,
     LIBELLES,
+    LIGNES_SUPERVISEES,
     PERMISSIONS,
     PUBLICATION,
     RESP_L1,
     RESP_L2,
+    ROLES_ADMINISTRATIFS,
     PermissionGrant,
 )
 from .planning import (  # noqa: F401

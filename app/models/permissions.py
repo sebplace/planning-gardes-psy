@@ -3,16 +3,22 @@
 Exigence P1.19. Six permissions ont été demandées par le client, chacune
 attribuable séparément, datée et journalisée :
 
-* ``RESP_L1`` : responsable de la première ligne ;
-* ``RESP_L2`` : responsable de la deuxième ligne ;
+* ``RESP_L1`` : responsable des gardes de première ligne ;
+* ``RESP_L2`` : responsable des gardes de deuxième ligne ;
 * ``CHEF_SERVICE`` : chef de service ;
 * ``GESTION_COMPTES`` : création et désactivation des comptes ;
 * ``PUBLICATION`` : validation et publication d'un planning ;
 * ``CONSULTATION_AUDIT`` : lecture du journal d'audit.
 
-Elles sont **indépendantes du statut professionnel** : un senior peut être
-responsable de ligne sans être administrateur, et un administrateur n'est pas
-nécessairement médecin.
+Elles sont **indépendantes du statut professionnel** : un médecin peut exercer
+une fonction administrative sans être administrateur global, et un
+administrateur n'est pas nécessairement médecin.
+
+Confirmé par le client le 04/09/2026 : les trois **fonctions** que sont
+responsable des gardes 1, responsable des gardes 2 et chef de service ouvrent
+l'**accès administratif** nécessaire à leur exercice. Les autres médecins
+restent non administrateurs. Les trois fonctions gardent des périmètres
+distincts et chaque attribution reste datée et journalisée.
 """
 
 from __future__ import annotations
@@ -40,9 +46,24 @@ PERMISSIONS = (
     CONSULTATION_AUDIT,
 )
 
+#: Fonctions qui ouvrent l'**accès administratif** à l'application, confirmées par
+#: le client le 04/09/2026 : responsable des gardes de première ligne, responsable
+#: des gardes de deuxième ligne, chef de service. Les autres médecins restent non
+#: administrateurs. Chaque fonction reste attribuée séparément, datée et
+#: journalisée : elles sont distinctes et traçables, jamais fusionnées.
+ROLES_ADMINISTRATIFS = (RESP_L1, RESP_L2, CHEF_SERVICE)
+
+#: Périmètre de ligne propre à chaque fonction. C'est ce qui distingue
+#: concrètement les trois rôles administratifs les uns des autres.
+LIGNES_SUPERVISEES = {
+    RESP_L1: ("L1",),
+    RESP_L2: ("L2",),
+    CHEF_SERVICE: ("L1", "L2"),
+}
+
 LIBELLES = {
-    RESP_L1: "Responsable de la première ligne",
-    RESP_L2: "Responsable de la deuxième ligne",
+    RESP_L1: "Responsable des gardes de première ligne",
+    RESP_L2: "Responsable des gardes de deuxième ligne",
     CHEF_SERVICE: "Chef de service",
     GESTION_COMPTES: "Gestion des comptes",
     PUBLICATION: "Validation et publication du planning",

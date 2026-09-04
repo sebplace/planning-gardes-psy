@@ -120,6 +120,115 @@ def test_un_administrateur_detient_tout(world):
     assert all(ligne.origine == "administrateur" for ligne in matrice)
 
 
+# --------------------------------------------------------------------------- #
+# Accès administratif attaché à une fonction (arbitrage du client du 04/09/2026)
+# --------------------------------------------------------------------------- #
+
+
+def test_les_trois_fonctions_ouvrent_l_acces_administratif(world):
+    """Responsables des gardes 1 et 2, et chef de service."""
+    from app.models import ROLES_ADMINISTRATIFS
+
+    assert ROLES_ADMINISTRATIFS == (
+        permissions.RESP_L1,
+        permissions.RESP_L2,
+        permissions.CHEF_SERVICE,
+    )
+    for index, code in enumerate(ROLES_ADMINISTRATIFS):
+        utilisateur = world.user_of(world.seniors[index])
+        assert not permission_service.has_administrative_access(
+            world.session, utilisateur
+        )
+        permission_service.grant(world.session, utilisateur, code, world.admin)
+        assert permission_service.has_administrative_access(
+            world.session, utilisateur
+        ), code
+
+
+def test_les_autres_medecins_restent_non_administrateurs(world):
+    """Les trois autres permissions n'ouvrent aucun accès administratif."""
+    autres = (
+        permissions.GESTION_COMPTES,
+        permissions.PUBLICATION,
+        permissions.CONSULTATION_AUDIT,
+    )
+    utilisateur = world.user_of(world.seniors[0])
+    for code in autres:
+        permission_service.grant(world.session, utilisateur, code, world.admin)
+    assert utilisateur.is_admin is False
+    assert not permission_service.has_administrative_access(
+        world.session, utilisateur
+    )
+
+
+def test_un_medecin_sans_fonction_n_a_pas_l_acces_administratif(world):
+    utilisateur = world.user_of(world.seniors[1])
+    assert not permission_service.has_administrative_access(world.session, utilisateur)
+
+
+def test_les_trois_fonctions_ont_des_perimetres_distincts(world):
+    """Leurs permissions peuvent différer : le périmètre de ligne les distingue."""
+    resp1 = world.user_of(world.seniors[0])
+    resp2 = world.user_of(world.seniors[1])
+    chef = world.user_of(world.seniors[2])
+    permission_service.grant(world.session, resp1, permissions.RESP_L1, world.admin)
+    permission_service.grant(world.session, resp2, permissions.RESP_L2, world.admin)
+    permission_service.grant(
+        world.session, chef, permissions.CHEF_SERVICE, world.admin
+    )
+
+    assert permission_service.supervised_lines(world.session, resp1) == {"L1"}
+    assert permission_service.supervised_lines(world.session, resp2) == {"L2"}
+    assert permission_service.supervised_lines(world.session, chef) == {"L1", "L2"}
+
+    assert permission_service.supervises_line(world.session, resp1, "L1")
+    assert not permission_service.supervises_line(world.session, resp1, "L2")
+    assert permission_service.supervises_line(world.session, resp2, "L2")
+    assert not permission_service.supervises_line(world.session, resp2, "L1")
+
+
+def test_les_fonctions_restent_distinctes_et_tracables(world):
+    """Détenir une fonction n'en confère aucune autre, et tout est journalisé."""
+    resp1 = world.user_of(world.seniors[0])
+    permission_service.grant(world.session, resp1, permissions.RESP_L1, world.admin)
+
+    assert permission_service.administrative_roles(world.session, resp1) == [
+        permissions.RESP_L1
+    ]
+    assert not permission_service.has_permission(
+        world.session, resp1, permissions.RESP_L2
+    )
+    assert not permission_service.has_permission(
+        world.session, resp1, permissions.CHEF_SERVICE
+    )
+    assert not permission_service.has_permission(
+        world.session, resp1, permissions.PUBLICATION
+    )
+
+    ligne = world.session.execute(
+        select(PermissionGrant).where(PermissionGrant.user_id == resp1.id)
+    ).scalar_one()
+    assert ligne.start_date is not None
+    assert ligne.granted_by_id == world.admin.id
+    actions = [
+        e.action for e in world.session.execute(select(AuditEvent)).scalars()
+    ]
+    assert "PERMISSION_ACCORDEE" in actions
+
+
+def test_l_acces_administratif_cesse_a_la_revocation(world):
+    chef = world.user_of(world.seniors[0])
+    permission_service.grant(
+        world.session, chef, permissions.CHEF_SERVICE, world.admin
+    )
+    assert permission_service.has_administrative_access(world.session, chef)
+    permission_service.revoke(
+        world.session, chef, permissions.CHEF_SERVICE, world.admin
+    )
+    assert not permission_service.has_administrative_access(world.session, chef)
+    assert permission_service.supervised_lines(world.session, chef) == set()
+
+
 def test_la_matrice_est_lisible_pour_un_non_administrateur(world):
     utilisateur = world.user_of(world.seniors[0])
     permission_service.grant(
@@ -184,3 +293,39 @@ def test_un_administrateur_garde_l_acces_au_journal(world):
         json={"email": world.admin.email, "password": "demo"},
     )
     assert client.get("/api/v1/audit/verify").status_code == 200
+
+
+def test_le_chef_de_service_accede_a_l_administration(world):
+    """Effet réel : la fonction ouvre l'écran d'administration."""
+    session = world.session
+    chef = world.user_of(world.seniors[0])
+    session.commit()
+    client = TestClient(app)
+    client.post("/api/v1/auth/login", json={"email": chef.email, "password": "demo"})
+    assert client.get("/admin").status_code == 403
+
+    permission_service.grant(session, chef, permissions.CHEF_SERVICE, world.admin)
+    session.commit()
+    assert client.get("/admin").status_code == 200
+
+
+def test_un_medecin_ordinaire_n_accede_pas_a_l_administration(world):
+    session = world.session
+    medecin = world.user_of(world.seniors[1])
+    session.commit()
+    client = TestClient(app)
+    client.post("/api/v1/auth/login", json={"email": medecin.email, "password": "demo"})
+    reponse = client.get("/admin")
+    assert reponse.status_code == 403
+    assert "responsables des gardes" in reponse.text
+
+
+def test_le_responsable_de_ligne_accede_a_l_administration(world):
+    session = world.session
+    resp = world.user_of(world.seniors[0])
+    permission_service.grant(session, resp, permissions.RESP_L1, world.admin)
+    session.commit()
+    client = TestClient(app)
+    client.post("/api/v1/auth/login", json={"email": resp.email, "password": "demo"})
+    assert client.get("/admin").status_code == 200
+    assert client.get("/admin/quotas").status_code == 200

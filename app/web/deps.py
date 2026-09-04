@@ -45,6 +45,25 @@ def profile_of(session: Session, user: User) -> ProfessionalProfile | None:
     ).scalar_one_or_none()
 
 
+def require_administrative_access(
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+) -> User:
+    """Accès administratif ouvert aux trois fonctions confirmées par le client.
+
+    Responsable des gardes de première ligne, responsable des gardes de deuxième
+    ligne et chef de service. Les autres médecins restent non administrateurs.
+    """
+    if not permission_service.has_administrative_access(session, user):
+        raise HTTPException(
+            403,
+            "Accès administratif requis. Il est ouvert aux responsables des "
+            "gardes de première ligne, aux responsables des gardes de deuxième "
+            "ligne et au chef de service.",
+        )
+    return user
+
+
 def require_permission(code: str):
     """Dépendance FastAPI exigeant une permission précise (P1.19).
 

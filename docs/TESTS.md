@@ -108,3 +108,17 @@ supprimés :
   couvre bien une paire de jours fériés **mais n'ouvre aucune reprise** ;
 - `test_handover.py` ne teste plus l'enchaînement verte puis orange, mais la collecte
   unique suivie d'une escalade immédiate.
+
+---
+
+## Corrections du client du 04/09/2026
+
+| Correction | Fichier de test |
+|---|---|
+| Le maximum de service continu ne vise que les assistants ; un senior n'est jamais bloque par cette regle | `tests/test_repos_recuperation.py` : `test_un_senior_n_est_pas_bloque_par_la_duree_continue`, `test_la_regle_ne_vise_que_les_assistants`, `test_bloc_continu_d_assistant_refuse_sans_demande_explicite` |
+| Les trois fonctions (responsable gardes 1, responsable gardes 2, chef de service) ouvrent l'acces administratif | `tests/test_permissions.py` : `test_les_trois_fonctions_ouvrent_l_acces_administratif`, `test_le_chef_de_service_accede_a_l_administration`, `test_le_responsable_de_ligne_accede_a_l_administration` |
+| Les autres medecins restent non administrateurs | `test_les_autres_medecins_restent_non_administrateurs`, `test_un_medecin_ordinaire_n_accede_pas_a_l_administration` |
+| Les permissions des trois fonctions sont distinctes et tracables | `test_les_trois_fonctions_ont_des_perimetres_distincts`, `test_les_fonctions_restent_distinctes_et_tracables`, `test_l_acces_administratif_cesse_a_la_revocation` |
+
+`test_engine_hard.py::test_17_regle_de_repos_ferme_jamais_violee` ne verifie plus le
+maximum de service continu que sur les assistants.

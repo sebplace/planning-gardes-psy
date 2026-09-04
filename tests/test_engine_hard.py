@@ -142,7 +142,12 @@ def test_04_senior_compatible_avec_tout_assistant(world):
 
 
 def test_17_regle_de_repos_ferme_jamais_violee(world):
-    from app.models import DUREE_CONTINUE_MAX_HEURES
+    """Le maximum de service continu vaut pour les **assistants** uniquement.
+
+    Portée restreinte par le client le 04/09/2026 : aucun blocage supplémentaire
+    n'est créé pour les seniors.
+    """
+    from app.models import DUREE_CONTINUE_MAX_HEURES, ProfessionalProfile, Status
 
     run = _solution_of(world)
     for proposal in run.proposals:
@@ -150,10 +155,13 @@ def test_17_regle_de_repos_ferme_jamais_violee(world):
         for item in proposal.items:
             post = world.session.get(CoveragePost, item.post_id)
             par_personne.setdefault(item.profile_id, []).append(post.occurrence)
-        for occurrences in par_personne.values():
+        for profile_id, occurrences in par_personne.items():
+            profil = world.session.get(ProfessionalProfile, profile_id)
+            if profil.status is not Status.ASSISTANT:
+                continue
             occurrences.sort(key=lambda o: o.start_at)
             # Aucune demande explicite dans cet univers : aucun bloc de service
-            # continu ne peut donc dépasser le maximum.
+            # continu d'assistant ne peut donc dépasser le maximum.
             debut = fin = None
             for occurrence in occurrences:
                 if fin is None or occurrence.start_at > fin:

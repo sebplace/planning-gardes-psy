@@ -70,9 +70,11 @@ plafond 6 (saturation 98,6 % sur la période de 50 semaines).
 ## Q-06 — Repos minimal et gardes rapprochées
 **Statut Partiellement tranchée (03/09/2026)** · **Impact** fort
 *Tranché par le client* : **aucune interdiction universelle de 24 h** entre toutes les
-gardes. La règle ferme correspondante a été retirée. Ce qui est ferme désormais :
-ne jamais dépasser **24 h de service continu**, sauf demande explicite et datée de la
-personne (cas du week-end complet). S'y ajoutent, hors moteur : au moins **12 h de
+gardes. La règle ferme correspondante a été retirée. Ce qui est ferme désormais, et
+**uniquement pour les assistants** (portée restreinte par le client le 04/09/2026) :
+ne jamais dépasser **24 h de service continu**, sauf demande explicite et datée de
+l'intéressé (cas du week-end complet). Pour les seniors, **aucun blocage
+supplémentaire** n'est créé. S'y ajoutent, hors moteur : au moins **12 h de
 récupération** après **12 h continues réellement travaillées sur place**, proposées et
 soumises à validation humaine ; aucun droit ouvert par un simple appel sans
 déplacement ; **aucune présomption** de nuit travaillée du seul fait d'avoir été de
@@ -80,10 +82,26 @@ garde.
 *Reste ouvert* : l'espacement prévisionnel ordinaire (valeur de démonstration : 7 jours,
 **souple**) et le maximum de week-ends consécutifs (2, **souple**) ne sont pas validés
 institutionnellement. La concentration produit une alerte paramétrable, jamais une règle.
-*Nouvelle question* : la dérogation de bloc continu a été confirmée pour les assistants ;
-elle est implémentée de façon générique, donc un senior souhaitant un week-end complet
-devrait lui aussi formuler une demande explicite. À confirmer.
+*Nouvelle question* : le périmètre de ligne des fonctions administratives
+(responsable des gardes 1 sur la première ligne, responsable des gardes 2 sur la
+deuxième) est **déduit du nom des fonctions** et n'a pas été validé. Il n'est
+appliqué qu'à l'avancement d'une reprise. Voir Q-14.
 *Où* : `rest_rules`, `weekend_block_requests`, `on_site_reports`, `recovery_proposals`.
+
+## Q-14 — Périmètre exact des trois fonctions administratives
+**Statut Ouverte** · **Impact** moyen
+*Tranché par le client le 04/09/2026* : responsable des gardes 1, responsable des
+gardes 2 et chef de service disposent des droits administratifs nécessaires à leur
+fonction ; leurs permissions peuvent différer mais restent distinctes et traçables ;
+les autres médecins restent non administrateurs.
+*Hypothèse de démonstration, non validée* : les trois fonctions ouvrent le même
+espace d'administration, et se distinguent par la **ligne supervisée** (L1, L2, ou
+les deux pour le chef de service). Cette distinction n'est aujourd'hui appliquée
+qu'à l'avancement d'une reprise.
+*Question ouverte* : faut-il restreindre davantage selon la ligne, par exemple la
+génération d'un planning ou la saisie des quotas ?
+*Où* : `app/models/permissions.py` (`ROLES_ADMINISTRATIFS`, `LIGNES_SUPERVISEES`),
+`app/services/permission_service.py`.
 
 ## Q-07 — Ordre et pondération exacts des critères souples
 **Statut** Ouverte sauf pour la priorité seniors (M-006, tranchée) · **Impact** fort

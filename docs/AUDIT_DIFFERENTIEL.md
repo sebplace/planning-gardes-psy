@@ -316,10 +316,68 @@ Migration `a7b6c5d4e321`. Tests : `tests/test_permissions.py`.
 
 - Le **plafond mensuel institutionnel** reste à chiffrer. L'application alerte,
   elle n'invente pas.
-- La **dérogation de bloc continu** a été confirmée pour le week-end complet des
-  assistants. Elle est implémentée de façon générique, donc un senior souhaitant
-  un week-end complet devrait lui aussi formuler une demande explicite. À
-  confirmer par le client.
 - Les **situations intermédiaires** de récupération restent volontairement sans
   automatisme, conformément à la demande d'appréciation humaine.
+
+---
+
+## Avancement (04/09/2026) — corrections demandées par le client
+
+Suite complète : **171 tests verts**.
+
+### Correction 1 — portée du bloc continu restreinte aux assistants
+
+Le client a explicitement demandé de **ne pas généraliser aux seniors**
+l'obligation de demander un week-end complet.
+
+- `ContinuousDutyRuleIn` porte désormais `applies_to_statuses`, valorisé à
+  `{ASSISTANT}` uniquement.
+- La contrainte ferme `H13` n'est évaluée que pour un assistant. Pour un senior,
+  **aucun blocage supplémentaire** n'est créé : les autres contraintes connues et
+  la validation humaine habituelle restent seules applicables.
+- La portée fait partie de l'empreinte d'exécution du moteur, donc un changement
+  de portée serait visible dans l'instantané reproductible.
+- Tests : `test_un_senior_n_est_pas_bloque_par_la_duree_continue` prouve qu'un
+  enchaînement refusé pour un assistant passe sans obstacle pour un senior ;
+  `test_la_regle_ne_vise_que_les_assistants` contrôle la portée déclarée ;
+  `test_17` de `test_engine_hard.py` ne vérifie plus le maximum que sur les
+  assistants.
+
+### Correction 2 — droits administratifs attachés aux trois fonctions
+
+La formulation antérieure, « six permissions distinctes déléguées à six médecins
+non administrateurs », était effectivement ambiguë : elle laissait entendre que
+les responsables de ligne et le chef de service n'avaient aucun droit
+administratif. Corrigé.
+
+- Trois **fonctions** ouvrent l'accès administratif :
+  `RESP_L1` (responsable des gardes de première ligne), `RESP_L2` (responsable
+  des gardes de deuxième ligne), `CHEF_SERVICE` (chef de service).
+- Trois **permissions complémentaires** restent indépendantes et n'ouvrent à
+  elles seules aucun accès administratif : `GESTION_COMPTES`, `PUBLICATION`,
+  `CONSULTATION_AUDIT`.
+- Les autres médecins restent **non administrateurs**.
+- Les fonctions ont des **périmètres distincts**, matérialisés par la ligne
+  supervisée : `RESP_L1` couvre la première ligne, `RESP_L2` la deuxième,
+  `CHEF_SERVICE` les deux. L'avancement d'une reprise est refusé au responsable
+  qui n'a pas la ligne concernée.
+- Chaque attribution reste **séparée, datée et journalisée** : détenir une
+  fonction n'en confère aucune autre, et la révocation coupe immédiatement
+  l'accès administratif.
+- Les contrôles `user.is_admin` de l'espace d'administration sont remplacés par
+  `permission_service.has_administrative_access`, en interface comme en API.
+- Le message de refus nomme les trois fonctions au lieu de parler
+  d'« administrateurs ».
+- Tests : `tests/test_permissions.py`, dont l'accès effectif à `/admin` et
+  `/admin/quotas` pour un chef de service et pour un responsable de ligne, et le
+  refus pour un médecin ordinaire.
+
+### Question nouvelle ouverte par cette correction
+
+Le périmètre de ligne (`RESP_L1` sur la première ligne, `RESP_L2` sur la
+deuxième) est **déduit du nom des fonctions**, il n'a pas été validé
+institutionnellement. Il n'est aujourd'hui appliqué qu'à l'avancement d'une
+reprise. Le reste de l'espace d'administration est ouvert aux trois fonctions
+sans distinction. À confirmer par le client : faut-il restreindre davantage,
+par exemple la génération ou les quotas, selon la ligne ?
 

@@ -105,8 +105,8 @@ HARD_CONSTRAINT_LABELS: Mapping[str, str] = {
         "institutionnellement et déclaré ferme)"
     ),
     H_DUREE_CONTINUE: (
-        "Durée de service continu supérieure au maximum, sans demande explicite "
-        "et datée de la personne"
+        "Durée de service continu d'un assistant supérieure au maximum, sans "
+        "demande explicite et datée de la personne"
     ),
 }
 
@@ -261,10 +261,14 @@ class MonthlyCapIn:
 class ContinuousDutyRuleIn:
     """Durée maximale de service **continu** planifié.
 
-    Le client interdit de dépasser 24 h d'affilée (03/09/2026), tout en autorisant
-    le week-end complet d'un assistant **sur demande explicite et datée**. Cette
-    règle porte donc les deux faces : un maximum ferme, et une dérogation qui
-    n'existe que si la personne l'a elle-même demandée.
+    Portée restreinte par le client le 04/09/2026 : cette règle ferme ne vise
+    **que les assistants**. Pour les seniors, aucun blocage supplémentaire n'est
+    ajouté ; les autres contraintes connues et la validation humaine habituelle
+    restent applicables.
+
+    Pour un assistant, un bloc de service continu dépassant ``max_hours`` n'est
+    possible que sur demande explicite et datée de l'intéressé : c'est le
+    mécanisme du week-end complet.
 
     Elle ne présume rien du travail réellement effectué sur place : elle borne
     seulement la durée de service planifiée d'un seul tenant.
@@ -272,8 +276,13 @@ class ContinuousDutyRuleIn:
 
     max_hours: float = 24.0
     label: str = "durée de service continu"
+    #: Statuts réellement soumis à la règle. Assistants uniquement par défaut.
+    applies_to_statuses: frozenset[Status] = frozenset({Status.ASSISTANT})
     #: (profile_id, date d'ancrage du bloc) des dérogations explicites et datées.
     explicit_requests: frozenset[tuple[int, date]] = frozenset()
+
+    def applies_to(self, person: PersonIn) -> bool:
+        return person.status in self.applies_to_statuses
 
     def has_request(self, profile_id: int, days: set[date]) -> bool:
         return any((profile_id, day) in self.explicit_requests for day in days)
@@ -434,6 +443,7 @@ class EngineInput:
             "continuous_duty": (
                 [
                     self.continuous_duty.max_hours,
+                    sorted(s.value for s in self.continuous_duty.applies_to_statuses),
                     sorted(
                         (pid, day.isoformat())
                         for pid, day in self.continuous_duty.explicit_requests

@@ -19,7 +19,9 @@ from sqlalchemy.orm import Session
 
 from ..models import (
     LIBELLES,
+    LIGNES_SUPERVISEES,
     PERMISSIONS,
+    ROLES_ADMINISTRATIFS,
     PermissionGrant,
     User,
 )
@@ -160,6 +162,65 @@ def require(session: Session, user: User | None, code: str) -> None:
     if not has_permission(session, user, code):
         raise PermissionError_(
             f"Droit « {LIBELLES.get(code, code)} » requis pour cette action."
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Accès administratif attaché à une fonction
+# --------------------------------------------------------------------------- #
+
+
+def administrative_roles(session: Session, user: User | None) -> list[str]:
+    """Fonctions administratives réellement exercées par ce compte aujourd'hui."""
+    if user is None or not user.is_active:
+        return []
+    return [
+        code
+        for code in ROLES_ADMINISTRATIFS
+        if has_permission(session, user, code)
+    ]
+
+
+def has_administrative_access(session: Session, user: User | None) -> bool:
+    """Vrai si le compte exerce une fonction ouvrant l'accès administratif.
+
+    Confirmé par le client le 04/09/2026 : responsable des gardes 1, responsable
+    des gardes 2 et chef de service disposent des droits administratifs
+    nécessaires à leur fonction. Les autres médecins restent non administrateurs.
+    """
+    if user is None or not user.is_active:
+        return False
+    if user.is_admin:
+        return True
+    return bool(administrative_roles(session, user))
+
+
+def supervised_lines(session: Session, user: User | None) -> set[str]:
+    """Lignes de garde supervisées, ce qui distingue les trois fonctions.
+
+    Responsable des gardes 1 : première ligne. Responsable des gardes 2 :
+    deuxième ligne. Chef de service et administrateur global : les deux.
+    """
+    if user is None or not user.is_active:
+        return set()
+    if user.is_admin:
+        return {"L1", "L2"}
+    lignes: set[str] = set()
+    for code in administrative_roles(session, user):
+        lignes.update(LIGNES_SUPERVISEES.get(code, ()))
+    return lignes
+
+
+def supervises_line(session: Session, user: User | None, line: str) -> bool:
+    return line in supervised_lines(session, user)
+
+
+def require_administrative_access(session: Session, user: User | None) -> None:
+    if not has_administrative_access(session, user):
+        raise PermissionError_(
+            "Accès administratif requis. Il est ouvert aux responsables des "
+            "gardes de première ligne, aux responsables des gardes de deuxième "
+            "ligne et au chef de service."
         )
 
 

@@ -63,19 +63,65 @@ def test_deux_gardes_rapprochees_restent_possibles(world):
 # --------------------------------------------------------------------------- #
 
 
-def _weekend_contigu(world):
-    """Deux occurrences contiguës formant plus de 24 h de service continu."""
+def _weekend_contigu(world, mode=None):
+    """Deux occurrences contiguës formant plus de 24 h de service continu.
+
+    ``mode`` force le mode de couverture des deux occurrences, afin que le poste
+    voulu (assistant en première ligne, ou senior) existe réellement.
+    """
+    from app.services import catalog_service
+
     occurrences = world.occurrences
     for avant, apres in zip(occurrences, occurrences[1:]):
-        if apres.start_at == avant.end_at:
-            duree = (apres.end_at - avant.start_at).total_seconds() / 3600.0
-            if duree > DUREE_CONTINUE_MAX_HEURES:
-                return avant, apres
+        if apres.start_at != avant.end_at:
+            continue
+        duree = (apres.end_at - avant.start_at).total_seconds() / 3600.0
+        if duree <= DUREE_CONTINUE_MAX_HEURES:
+            continue
+        if mode is not None:
+            catalog_service.set_coverage_mode(world.session, avant, mode)
+            catalog_service.set_coverage_mode(world.session, apres, mode)
+            world.session.flush()
+            # Les postes ont été supprimés puis recréés : il faut relire les
+            # collections, sinon on référencerait des postes qui n'existent plus.
+            world.session.refresh(avant)
+            world.session.refresh(apres)
+        return avant, apres
     pytest.skip("aucun bloc contigu de plus de 24 h dans cet univers de test")
 
 
-def test_bloc_continu_refuse_sans_demande_explicite(world):
-    avant, apres = _weekend_contigu(world)
+def test_bloc_continu_d_assistant_refuse_sans_demande_explicite(world):
+    from app.models import CoverageMode
+
+    avant, apres = _weekend_contigu(world, mode=CoverageMode.B)
+    assistant = world.assistants[0]
+    poste_a = next(
+        p for p in avant.posts if p.line is Line.L1 and p.required_status is Status.ASSISTANT
+    )
+    poste_b = next(
+        p for p in apres.posts if p.line is Line.L1 and p.required_status is Status.ASSISTANT
+    )
+    world.set_color(assistant, avant, Color.VERT)
+    world.set_color(assistant, apres, Color.VERT)
+
+    assert engine_bridge.check_assignment(world.session, poste_a, assistant) is None
+    _affecter(world, poste_a, assistant)
+    refus = engine_bridge.check_assignment(world.session, poste_b, assistant)
+    assert refus is not None
+    assert refus.constraint_code == H_DUREE_CONTINUE
+    assert "demande explicite" in refus.detail
+    assert "assistant" in refus.detail
+
+
+def test_un_senior_n_est_pas_bloque_par_la_duree_continue(world):
+    """Portée restreinte aux assistants (arbitrage du client du 04/09/2026).
+
+    Le même enchaînement, refusé pour un assistant, ne crée **aucun** blocage
+    supplémentaire pour un senior.
+    """
+    from app.models import CoverageMode
+
+    avant, apres = _weekend_contigu(world, mode=CoverageMode.A)
     senior = world.seniors[0]
     poste_a = next(p for p in avant.posts if p.required_status is Status.SENIOR)
     poste_b = next(p for p in apres.posts if p.required_status is Status.SENIOR)
@@ -84,31 +130,43 @@ def test_bloc_continu_refuse_sans_demande_explicite(world):
 
     assert engine_bridge.check_assignment(world.session, poste_a, senior) is None
     _affecter(world, poste_a, senior)
-    refus = engine_bridge.check_assignment(world.session, poste_b, senior)
-    assert refus is not None
-    assert refus.constraint_code == H_DUREE_CONTINUE
-    assert "demande explicite" in refus.detail
+    # Aucune demande explicite n'a été formulée, et pourtant rien ne bloque.
+    assert engine_bridge.check_assignment(world.session, poste_b, senior) is None
+
+
+def test_la_regle_ne_vise_que_les_assistants(session):
+    """Contrôle direct de la portée déclarée de la règle."""
+    from app.services import engine_bridge as bridge
+
+    regle = bridge.continuous_duty_rule(session)
+    assert regle.applies_to_statuses == frozenset({Status.ASSISTANT})
 
 
 def test_bloc_continu_autorise_apres_demande_datee(world):
-    avant, apres = _weekend_contigu(world)
-    senior = world.seniors[0]
-    poste_a = next(p for p in avant.posts if p.required_status is Status.SENIOR)
-    poste_b = next(p for p in apres.posts if p.required_status is Status.SENIOR)
-    world.set_color(senior, avant, Color.VERT)
-    world.set_color(senior, apres, Color.VERT)
+    from app.models import CoverageMode
+
+    avant, apres = _weekend_contigu(world, mode=CoverageMode.B)
+    assistant = world.assistants[0]
+    poste_a = next(
+        p for p in avant.posts if p.line is Line.L1 and p.required_status is Status.ASSISTANT
+    )
+    poste_b = next(
+        p for p in apres.posts if p.line is Line.L1 and p.required_status is Status.ASSISTANT
+    )
+    world.set_color(assistant, avant, Color.VERT)
+    world.set_color(assistant, apres, Color.VERT)
 
     demande = rest_service.request_weekend_block(
-        world.session, senior, avant.local_date, world.admin
+        world.session, assistant, avant.local_date, world.admin
     )
     assert demande.requested_at is not None
 
-    _affecter(world, poste_a, senior)
-    assert engine_bridge.check_assignment(world.session, poste_b, senior) is None
+    _affecter(world, poste_a, assistant)
+    assert engine_bridge.check_assignment(world.session, poste_b, assistant) is None
 
     # Retirée, la dérogation cesse immédiatement de produire effet.
     rest_service.withdraw_weekend_block(world.session, demande, world.admin)
-    refus = engine_bridge.check_assignment(world.session, poste_b, senior)
+    refus = engine_bridge.check_assignment(world.session, poste_b, assistant)
     assert refus is not None
     assert refus.constraint_code == H_DUREE_CONTINUE
 

@@ -64,6 +64,14 @@ from ..deps import optional_user, profile_of
 router = APIRouter()
 templates = Jinja2Templates(directory=str(__file__).rsplit("routers", 1)[0] + "templates")
 
+#: Message unique de refus d'accès administratif, pour ne pas laisser croire que
+#: seul un administrateur global peut agir (arbitrage client du 04/09/2026).
+ACCES_ADMIN_REFUSE = (
+    "Accès administratif requis. Il est ouvert aux responsables des gardes de "
+    "première ligne, aux responsables des gardes de deuxième ligne et au chef de "
+    "service."
+)
+
 COLOR_LABEL = {
     Color.VERT: ("V", "Vert — disponible", "vert"),
     Color.ORANGE: ("O", "Orange — possible, à éviter si mieux", "orange"),
@@ -506,8 +514,8 @@ def admin_home(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not user.is_admin:
-        raise HTTPException(403, "Réservé aux administrateurs.")
+    if not permission_service.has_administrative_access(session, user):
+        raise HTTPException(403, ACCES_ADMIN_REFUSE)
     campaigns = list(session.execute(select(Campaign).order_by(Campaign.id.desc())).scalars())
     quarters = list(session.execute(select(Quarter).order_by(Quarter.id)).scalars())
     runs = list(session.execute(select(EngineRun).order_by(EngineRun.id.desc())).scalars())
@@ -530,8 +538,8 @@ def admin_generate(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not user.is_admin:
-        raise HTTPException(403, "Réservé aux administrateurs.")
+    if not permission_service.has_administrative_access(session, user):
+        raise HTTPException(403, ACCES_ADMIN_REFUSE)
     quarter = session.get(Quarter, quarter_id)
     # Bornes serveur (P4.8) : variantes limitées à 1..3.
     variantes = max(1, min(3, variantes))
@@ -553,8 +561,8 @@ def run_detail(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not user.is_admin:
-        raise HTTPException(403, "Réservé aux administrateurs.")
+    if not permission_service.has_administrative_access(session, user):
+        raise HTTPException(403, ACCES_ADMIN_REFUSE)
     run = session.get(EngineRun, run_id)
     proposals = sorted(run.proposals, key=lambda p: p.variant_index)
     details = [
@@ -578,8 +586,8 @@ def keep_proposal(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not user.is_admin:
-        raise HTTPException(403, "Réservé aux administrateurs.")
+    if not permission_service.has_administrative_access(session, user):
+        raise HTTPException(403, ACCES_ADMIN_REFUSE)
     proposal = session.get(Proposal, proposal_id)
     version = planning_service.create_version_from_proposal(
         session, proposal, user, note=f"Variante {proposal.variant_index}"
@@ -596,8 +604,8 @@ def version_detail(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not user.is_admin:
-        raise HTTPException(403, "Réservé aux administrateurs.")
+    if not permission_service.has_administrative_access(session, user):
+        raise HTTPException(403, ACCES_ADMIN_REFUSE)
     version = session.get(ScheduleVersion, version_id)
     rows = session.execute(
         select(Assignment, CoveragePost, GardeOccurrence)
@@ -623,8 +631,8 @@ def correct(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not user.is_admin:
-        raise HTTPException(403, "Réservé aux administrateurs.")
+    if not permission_service.has_administrative_access(session, user):
+        raise HTTPException(403, ACCES_ADMIN_REFUSE)
     version = session.get(ScheduleVersion, version_id)
     post = session.get(CoveragePost, post_id)
     profile = session.get(ProfessionalProfile, int(profile_id)) if profile_id else None
@@ -648,8 +656,8 @@ def version_action(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not user.is_admin:
-        raise HTTPException(403, "Réservé aux administrateurs.")
+    if not permission_service.has_administrative_access(session, user):
+        raise HTTPException(403, ACCES_ADMIN_REFUSE)
     version = session.get(ScheduleVersion, version_id)
     try:
         if action == "verrouiller":
@@ -694,8 +702,8 @@ def admin_quotas(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not user.is_admin:
-        raise HTTPException(403, "Réservé aux administrateurs.")
+    if not permission_service.has_administrative_access(session, user):
+        raise HTTPException(403, ACCES_ADMIN_REFUSE)
     year = session.execute(select(Year).order_by(Year.id.desc())).scalars().first()
     resumes = quota_service.admin_overview(session, year) if year else []
     return render(request, "quotas.html", user, "quotas", year=year, resumes=resumes)
@@ -835,9 +843,20 @@ def handover_advance(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not user.is_admin:
-        raise HTTPException(403, "Réservé aux administrateurs.")
+    if not permission_service.has_administrative_access(session, user):
+        raise HTTPException(403, ACCES_ADMIN_REFUSE)
     demande = session.get(HandoverRequest, request_id)
+    if demande is None:
+        raise HTTPException(404, "Demande de reprise introuvable.")
+    # Périmètre de ligne : c'est ce qui distingue concrètement les trois
+    # fonctions administratives les unes des autres.
+    ligne = demande.assignment.post.line.value
+    if not permission_service.supervises_line(session, user, ligne):
+        raise HTTPException(
+            403,
+            f"Cette reprise porte sur la ligne {ligne}. Elle relève du responsable "
+            "de cette ligne ou du chef de service.",
+        )
     try:
         handover_service.advance(session, demande)
         session.commit()
@@ -941,7 +960,7 @@ def notifications(
 ):
     _require(user)
     profile = profile_of(session, user)
-    if user.is_admin:
+    if permission_service.has_administrative_access(session, user):
         messages = notification_service.inbox(session)
     else:
         messages = notification_service.inbox(session, profile.id if profile else -1)
@@ -976,8 +995,8 @@ def projections(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not user.is_admin:
-        raise HTTPException(403, "Réservé aux administrateurs.")
+    if not permission_service.has_administrative_access(session, user):
+        raise HTTPException(403, ACCES_ADMIN_REFUSE)
     scenarios = list(session.execute(select(Scenario).order_by(Scenario.id.desc())).scalars())
     latest = {}
     for scenario in scenarios:
@@ -999,8 +1018,8 @@ def projection_detail(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not user.is_admin:
-        raise HTTPException(403, "Réservé aux administrateurs.")
+    if not permission_service.has_administrative_access(session, user):
+        raise HTTPException(403, ACCES_ADMIN_REFUSE)
     scenario = session.get(Scenario, scenario_id)
     result = session.execute(
         select(ScenarioResult).where(ScenarioResult.scenario_id == scenario.id)

@@ -168,6 +168,10 @@ def continuous_duty_rule(
 ) -> ContinuousDutyRuleIn:
     """Règle ferme de durée de service continu, avec ses dérogations datées.
 
+    Portée restreinte aux **assistants** par le client le 04/09/2026 : aucun
+    blocage supplémentaire n'est créé pour les seniors, chez qui les autres
+    contraintes et la validation humaine habituelle restent seules applicables.
+
     La seule dérogation possible est une demande explicite formulée par la
     personne elle-même. Une demande couvre le jour d'ancrage et le lendemain, ce
     qui correspond au week-end complet du samedi 9 h au lundi 9 h.
@@ -181,6 +185,7 @@ def continuous_duty_rule(
     return ContinuousDutyRuleIn(
         max_hours=max_hours,
         label="durée de service continu",
+        applies_to_statuses=frozenset({Status.ASSISTANT}),
         explicit_requests=frozenset(paires),
     )
 
