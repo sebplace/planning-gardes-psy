@@ -514,8 +514,8 @@ def admin_home(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not permission_service.has_administrative_access(session, user):
-        raise HTTPException(403, ACCES_ADMIN_REFUSE)
+    if not permission_service.may(session, user, permissions.ACTION_SIMULER):
+        raise HTTPException(403, permission_service.refus(permissions.ACTION_SIMULER))
     campaigns = list(session.execute(select(Campaign).order_by(Campaign.id.desc())).scalars())
     quarters = list(session.execute(select(Quarter).order_by(Quarter.id)).scalars())
     runs = list(session.execute(select(EngineRun).order_by(EngineRun.id.desc())).scalars())
@@ -538,8 +538,8 @@ def admin_generate(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not permission_service.has_administrative_access(session, user):
-        raise HTTPException(403, ACCES_ADMIN_REFUSE)
+    if not permission_service.may(session, user, permissions.ACTION_BROUILLON):
+        raise HTTPException(403, permission_service.refus(permissions.ACTION_BROUILLON))
     quarter = session.get(Quarter, quarter_id)
     # Bornes serveur (P4.8) : variantes limitées à 1..3.
     variantes = max(1, min(3, variantes))
@@ -561,8 +561,8 @@ def run_detail(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not permission_service.has_administrative_access(session, user):
-        raise HTTPException(403, ACCES_ADMIN_REFUSE)
+    if not permission_service.may(session, user, permissions.ACTION_SIMULER):
+        raise HTTPException(403, permission_service.refus(permissions.ACTION_SIMULER))
     run = session.get(EngineRun, run_id)
     proposals = sorted(run.proposals, key=lambda p: p.variant_index)
     details = [
@@ -586,8 +586,8 @@ def keep_proposal(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not permission_service.has_administrative_access(session, user):
-        raise HTTPException(403, ACCES_ADMIN_REFUSE)
+    if not permission_service.may(session, user, permissions.ACTION_BROUILLON):
+        raise HTTPException(403, permission_service.refus(permissions.ACTION_BROUILLON))
     proposal = session.get(Proposal, proposal_id)
     version = planning_service.create_version_from_proposal(
         session, proposal, user, note=f"Variante {proposal.variant_index}"
@@ -604,8 +604,8 @@ def version_detail(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not permission_service.has_administrative_access(session, user):
-        raise HTTPException(403, ACCES_ADMIN_REFUSE)
+    if not permission_service.may(session, user, permissions.ACTION_SIMULER):
+        raise HTTPException(403, permission_service.refus(permissions.ACTION_SIMULER))
     version = session.get(ScheduleVersion, version_id)
     rows = session.execute(
         select(Assignment, CoveragePost, GardeOccurrence)
@@ -631,8 +631,8 @@ def correct(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not permission_service.has_administrative_access(session, user):
-        raise HTTPException(403, ACCES_ADMIN_REFUSE)
+    if not permission_service.may(session, user, permissions.ACTION_BROUILLON):
+        raise HTTPException(403, permission_service.refus(permissions.ACTION_BROUILLON))
     version = session.get(ScheduleVersion, version_id)
     post = session.get(CoveragePost, post_id)
     profile = session.get(ProfessionalProfile, int(profile_id)) if profile_id else None
@@ -656,8 +656,8 @@ def version_action(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not permission_service.has_administrative_access(session, user):
-        raise HTTPException(403, ACCES_ADMIN_REFUSE)
+    if not permission_service.may(session, user, permissions.ACTION_BROUILLON):
+        raise HTTPException(403, permission_service.refus(permissions.ACTION_BROUILLON))
     version = session.get(ScheduleVersion, version_id)
     try:
         if action == "verrouiller":
@@ -665,20 +665,16 @@ def version_action(
         elif action == "deverrouiller":
             planning_service.set_lock(session, version, int(post_id), False, user)
         elif action == "valider":
-            if not permission_service.has_permission(
-                session, user, permissions.PUBLICATION
-            ):
+            if not permission_service.may(session, user, permissions.ACTION_PUBLIER):
                 raise HTTPException(
-                    403, "Droit « Validation et publication du planning » requis."
+                    403, permission_service.refus(permissions.ACTION_PUBLIER)
                 )
             planning_service.validate_version(session, version, user)
             flash(request, "succes", "Planning validé. Il peut maintenant être publié.")
         elif action == "publier":
-            if not permission_service.has_permission(
-                session, user, permissions.PUBLICATION
-            ):
+            if not permission_service.may(session, user, permissions.ACTION_PUBLIER):
                 raise HTTPException(
-                    403, "Droit « Validation et publication du planning » requis."
+                    403, permission_service.refus(permissions.ACTION_PUBLIER)
                 )
             planning_service.publish_version(session, version, user)
             flash(request, "succes", "Planning publié. Les médecins ont été notifiés (simulation).")
@@ -702,8 +698,8 @@ def admin_quotas(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not permission_service.has_administrative_access(session, user):
-        raise HTTPException(403, ACCES_ADMIN_REFUSE)
+    if not permission_service.may(session, user, permissions.ACTION_QUOTAS_SAISIR):
+        raise HTTPException(403, permission_service.refus(permissions.ACTION_QUOTAS_SAISIR))
     year = session.execute(select(Year).order_by(Year.id.desc())).scalars().first()
     resumes = quota_service.admin_overview(session, year) if year else []
     return render(request, "quotas.html", user, "quotas", year=year, resumes=resumes)
@@ -969,11 +965,11 @@ def audit(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not permission_service.has_permission(
-        session, user, permissions.CONSULTATION_AUDIT
+    if not permission_service.may(
+        session, user, permissions.ACTION_CONSULTER_AUDIT
     ):
         raise HTTPException(
-            403, "Droit « Consultation du journal d'audit » requis."
+            403, permission_service.refus(permissions.ACTION_CONSULTER_AUDIT)
         )
     ok, problems = audit_service.verify_chain(session)
     events = list(
@@ -990,8 +986,8 @@ def projections(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not permission_service.has_administrative_access(session, user):
-        raise HTTPException(403, ACCES_ADMIN_REFUSE)
+    if not permission_service.may(session, user, permissions.ACTION_SIMULER):
+        raise HTTPException(403, permission_service.refus(permissions.ACTION_SIMULER))
     scenarios = list(session.execute(select(Scenario).order_by(Scenario.id.desc())).scalars())
     latest = {}
     for scenario in scenarios:
@@ -1013,8 +1009,8 @@ def projection_detail(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    if not permission_service.has_administrative_access(session, user):
-        raise HTTPException(403, ACCES_ADMIN_REFUSE)
+    if not permission_service.may(session, user, permissions.ACTION_SIMULER):
+        raise HTTPException(403, permission_service.refus(permissions.ACTION_SIMULER))
     scenario = session.get(Scenario, scenario_id)
     result = session.execute(
         select(ScenarioResult).where(ScenarioResult.scenario_id == scenario.id)

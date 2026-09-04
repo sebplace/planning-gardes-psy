@@ -41,7 +41,7 @@ from ...services import (
     swap_service,
 )
 from ...services.clock import Clock
-from ..deps import current_user, require_administrative_access, require_permission
+from ..deps import current_user, require_action, require_permission
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
@@ -150,7 +150,7 @@ class ManualAssignmentIn(BaseModel):
 def manual_assignment(
     version_id: int,
     payload: ManualAssignmentIn,
-    admin: User = Depends(require_administrative_access),
+    admin: User = Depends(require_action(permissions.ACTION_BROUILLON)),
     session: Session = Depends(get_session),
 ):
     """Correction manuelle. Les contraintes fermes s'appliquent intégralement :
@@ -189,7 +189,7 @@ class GenerateIn(BaseModel):
 @router.post("/planning/generate")
 def generate(
     payload: GenerateIn,
-    admin: User = Depends(require_administrative_access),
+    admin: User = Depends(require_action(permissions.ACTION_BROUILLON)),
     session: Session = Depends(get_session),
 ):
     quarter = session.get(Quarter, payload.quarter_id)
@@ -315,7 +315,7 @@ def candidate(
 @router.post("/handover/requests/{request_id}/advance")
 def advance_handover(
     request_id: int,
-    user: User = Depends(require_administrative_access),
+    user: User = Depends(require_action(permissions.ACTION_OPERATIONNEL)),
     session: Session = Depends(get_session),
 ):
     request_obj = session.get(HandoverRequest, request_id)
@@ -484,7 +484,7 @@ def promote(
 
 @router.get("/audit/verify")
 def verify_audit(
-    user: User = Depends(require_permission(permissions.CONSULTATION_AUDIT)),
+    user: User = Depends(require_action(permissions.ACTION_CONSULTER_AUDIT)),
     session: Session = Depends(get_session),
 ):
     ok, problems = audit_service.verify_chain(session)

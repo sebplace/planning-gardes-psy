@@ -18,6 +18,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import (
+    ACTIONS,
+    ACTIONS_A_PERMISSION_EXPLICITE,
+    ACTIONS_CHEF_DE_SERVICE,
+    ACTIONS_COMMUNES_AUX_FONCTIONS,
+    ACTIONS_LIBELLES,
+    ACTIONS_PORTEES_PAR_LA_LIGNE,
+    CHEF_SERVICE,
     LIBELLES,
     LIGNES_SUPERVISEES,
     PERMISSIONS,
@@ -222,6 +229,98 @@ def require_administrative_access(session: Session, user: User | None) -> None:
             "gardes de première ligne, aux responsables des gardes de deuxième "
             "ligne et au chef de service."
         )
+
+
+# --------------------------------------------------------------------------- #
+# Matrice action × rôle × ligne
+# --------------------------------------------------------------------------- #
+
+
+def may(
+    session: Session, user: User | None, action: str, line: str | None = None
+) -> bool:
+    """Autorisation d'une **action nommée**, éventuellement portée par une ligne.
+
+    Gouvernance confirmée par le client le 04/09/2026 :
+
+    * responsable des gardes 1 : actions opérationnelles et quotas de L1 ;
+    * responsable des gardes 2 : idem sur L2 ;
+    * chef de service : les deux lignes, plus la validation des quotas ;
+    * les trois fonctions peuvent produire des simulations et des brouillons ;
+    * publication finale et dérogations transversales exigent une **permission
+      explicite**, attribuable et révocable, sans pouvoir implicite lié au simple
+      accès à l'espace administratif ;
+    * la consultation du journal est une permission distincte, jamais accordée
+      automatiquement.
+    """
+    if action not in ACTIONS:
+        raise PermissionError_(f"Action inconnue : {action}.")
+    if user is None or not user.is_active:
+        return False
+
+    # Les actions à permission explicite ne dépendent pas de l'accès administratif.
+    if action in ACTIONS_A_PERMISSION_EXPLICITE:
+        return has_permission(session, user, ACTIONS_A_PERMISSION_EXPLICITE[action])
+
+    if not has_administrative_access(session, user):
+        return False
+    if user.is_admin:
+        return True
+
+    roles = administrative_roles(session, user)
+    if action in ACTIONS_COMMUNES_AUX_FONCTIONS:
+        return bool(roles)
+    if action in ACTIONS_CHEF_DE_SERVICE:
+        return CHEF_SERVICE in roles
+    if action in ACTIONS_PORTEES_PAR_LA_LIGNE:
+        if line is None:
+            # Sans ligne précisée, l'action est ouverte dès qu'une ligne au moins
+            # est supervisée ; le contrôle fin se fait au moment de l'écriture.
+            return bool(supervised_lines(session, user))
+        return supervises_line(session, user, line)
+    return False
+
+
+def require_action(
+    session: Session, user: User | None, action: str, line: str | None = None
+) -> None:
+    if not may(session, user, action, line):
+        raise PermissionError_(refus(action, line))
+
+
+def refus(action: str, line: str | None = None) -> str:
+    """Message de refus lisible, nommant l'action et, le cas échéant, la ligne."""
+    libelle = ACTIONS_LIBELLES.get(action, action)
+    if action in ACTIONS_A_PERMISSION_EXPLICITE:
+        return (
+            f"Action « {libelle} » refusée : elle exige une permission explicite, "
+            "attribuable et révocable. L'accès à l'espace administratif ne la "
+            "confère pas."
+        )
+    portee = f" sur la ligne {line}" if line else ""
+    return (
+        f"Action « {libelle} »{portee} refusée. Elle relève des responsables des "
+        "gardes de la ligne concernée ou du chef de service."
+    )
+
+
+def action_matrix(session: Session, user: User) -> list[dict]:
+    """Matrice lisible action × ligne pour un compte donné."""
+    out = []
+    for action in ACTIONS:
+        ligne_par_ligne = {
+            ligne: may(session, user, action, ligne) for ligne in ("L1", "L2")
+        }
+        out.append(
+            {
+                "action": action,
+                "libelle": ACTIONS_LIBELLES[action],
+                "globale": may(session, user, action),
+                "par_ligne": ligne_par_ligne,
+                "exige_permission_explicite": action in ACTIONS_A_PERMISSION_EXPLICITE,
+            }
+        )
+    return out
 
 
 def require_line_supervision(session: Session, user: User | None, line: str) -> None:

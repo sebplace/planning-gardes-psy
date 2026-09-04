@@ -61,6 +61,57 @@ LIGNES_SUPERVISEES = {
     CHEF_SERVICE: ("L1", "L2"),
 }
 
+#: Actions administratives nommées. Elles servent de vocabulaire commun à la
+#: matrice route × action × rôle × ligne exigée par le client le 04/09/2026.
+ACTION_SIMULER = "SIMULER"
+ACTION_BROUILLON = "BROUILLON"
+ACTION_OPERATIONNEL = "OPERATIONNEL"
+ACTION_QUOTAS_SAISIR = "QUOTAS_SAISIR"
+ACTION_QUOTAS_VALIDER = "QUOTAS_VALIDER"
+ACTION_PUBLIER = "PUBLIER"
+ACTION_DEROGER = "DEROGER"
+ACTION_CONSULTER_AUDIT = "CONSULTER_AUDIT"
+
+ACTIONS = (
+    ACTION_SIMULER,
+    ACTION_BROUILLON,
+    ACTION_OPERATIONNEL,
+    ACTION_QUOTAS_SAISIR,
+    ACTION_QUOTAS_VALIDER,
+    ACTION_PUBLIER,
+    ACTION_DEROGER,
+    ACTION_CONSULTER_AUDIT,
+)
+
+ACTIONS_LIBELLES = {
+    ACTION_SIMULER: "Produire des simulations",
+    ACTION_BROUILLON: "Produire et corriger des brouillons",
+    ACTION_OPERATIONNEL: "Actions opérationnelles sur une ligne",
+    ACTION_QUOTAS_SAISIR: "Saisir les quotas d'une ligne",
+    ACTION_QUOTAS_VALIDER: "Valider les quotas",
+    ACTION_PUBLIER: "Publication finale du planning",
+    ACTION_DEROGER: "Dérogations transversales",
+    ACTION_CONSULTER_AUDIT: "Consulter le journal d'audit",
+}
+
+#: Actions ouvertes **à toute fonction administrative**, sans distinction de
+#: ligne. Les trois fonctions peuvent simuler et travailler des brouillons.
+ACTIONS_COMMUNES_AUX_FONCTIONS = (ACTION_SIMULER, ACTION_BROUILLON)
+
+#: Actions **portées par une ligne** : le périmètre de la fonction s'applique.
+ACTIONS_PORTEES_PAR_LA_LIGNE = (ACTION_OPERATIONNEL, ACTION_QUOTAS_SAISIR)
+
+#: Actions réservées au chef de service parmi les trois fonctions.
+ACTIONS_CHEF_DE_SERVICE = (ACTION_QUOTAS_VALIDER,)
+
+#: Actions qui exigent une **permission explicite**, sans pouvoir implicite lié
+#: au simple accès à l'espace administratif.
+ACTIONS_A_PERMISSION_EXPLICITE = {
+    ACTION_PUBLIER: PUBLICATION,
+    ACTION_DEROGER: PUBLICATION,
+    ACTION_CONSULTER_AUDIT: CONSULTATION_AUDIT,
+}
+
 LIBELLES = {
     RESP_L1: "Responsable des gardes de première ligne",
     RESP_L2: "Responsable des gardes de deuxième ligne",

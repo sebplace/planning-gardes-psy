@@ -64,6 +64,24 @@ def require_administrative_access(
     return user
 
 
+def require_action(action: str):
+    """Dépendance FastAPI exigeant une **action nommée** de la matrice.
+
+    C'est le pendant en API de ce que fait l'interface : les deux couches
+    consultent la même matrice action × rôle × ligne.
+    """
+
+    def _dependency(
+        user: User = Depends(current_user),
+        session: Session = Depends(get_session),
+    ) -> User:
+        if not permission_service.may(session, user, action):
+            raise HTTPException(403, permission_service.refus(action))
+        return user
+
+    return _dependency
+
+
 def require_permission(code: str):
     """Dépendance FastAPI exigeant une permission précise (P1.19).
 

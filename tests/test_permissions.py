@@ -269,7 +269,8 @@ def test_le_journal_d_audit_exige_le_droit_correspondant(world):
     )
     refus = client.get("/api/v1/audit/verify")
     assert refus.status_code == 403
-    assert "Consultation du journal d'audit" in refus.json()["detail"]
+    assert "journal d'audit" in refus.json()["detail"]
+    assert "permission explicite" in refus.json()["detail"]
 
     Clock.freeze(datetime(2027, 1, 15, 9, 0))
     permission_service.grant(
