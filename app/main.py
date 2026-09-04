@@ -17,7 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .config import settings
 from .db import create_all
 from .services import environment as envsvc
-from .services import http_security
+from .services import http_security, visibility_service
 from .web.routers import api, ui
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -137,6 +137,26 @@ def create_app() -> FastAPI:
             f"<p>Accès refusé : {detail}</p>"
             "<p><a href='/tableau-de-bord'>Retour au tableau de bord</a></p>",
             status_code=403,
+        )
+
+    @app.exception_handler(visibility_service.RessourceInvisible)
+    async def introuvable(request: Request, exc):
+        """Réponse **uniforme** pour une ressource inexistante ou hors périmètre.
+
+        Lot A, point 3 : le même corps et le même code sont renvoyés dans les
+        deux cas, afin qu'un balayage d'identifiants ne révèle pas l'existence
+        d'une reprise, d'un tirage ou d'un échange.
+        """
+        from fastapi.responses import JSONResponse
+
+        if request.url.path.startswith("/api/"):
+            return JSONResponse(
+                {"detail": visibility_service.INTROUVABLE}, status_code=404
+            )
+        return HTMLResponse(
+            f"<p>{visibility_service.INTROUVABLE}</p>"
+            "<p><a href='/tableau-de-bord'>Retour au tableau de bord</a></p>",
+            status_code=404,
         )
 
     @app.get("/health/live")

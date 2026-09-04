@@ -149,16 +149,21 @@ def test_les_deux_couches_repondent_pareil(world):
 
 
 def test_un_medecin_ordinaire_est_refuse_dans_les_deux_couches(world):
+    """Refus identique en interface et en API, sans fuite d'existence.
+
+    Lot A, point 3 : un médecin ordinaire étranger à la demande ne doit pas
+    pouvoir déduire son existence. Les deux couches renvoient donc la même
+    réponse « introuvable », et surtout **la même** dans les deux cas.
+    """
     publish_plan(world)
     demande = _demande_sur_ligne(world, Line.L1)
     medecin = world.user_of(world.seniors[1])
     client = _client_pour(world, medecin)
-    assert client.post(
-        f"/api/v1/handover/requests/{demande.id}/advance"
-    ).status_code == 403
-    assert client.post(
-        f"/reprises/{demande.id}/avancer", follow_redirects=False
-    ).status_code == 403
+    api = client.post(f"/api/v1/handover/requests/{demande.id}/advance")
+    ui = client.post(f"/reprises/{demande.id}/avancer", follow_redirects=False)
+    assert api.status_code == ui.status_code
+    assert api.status_code in (403, 404)
+    assert api.status_code == 404, "périmètre de lecture : réponse uniforme attendue"
 
 
 def test_la_revocation_coupe_l_acces_dans_les_deux_couches(world):
@@ -174,6 +179,10 @@ def test_la_revocation_coupe_l_acces_dans_les_deux_couches(world):
         world.session, resp1, permissions.RESP_L1, world.admin
     )
     world.session.commit()
-    assert client.post(
-        f"/api/v1/handover/requests/{demande.id}/advance"
-    ).status_code == 403
+    api = client.post(f"/api/v1/handover/requests/{demande.id}/advance")
+    ui = client.post(f"/reprises/{demande.id}/avancer", follow_redirects=False)
+    # Refus, et **le même** dans les deux couches. Le code exact dépend du
+    # périmètre de lecture : 403 si la personne reste un acteur légitime de la
+    # demande, 404 si elle n'en est plus rien (aucune fuite d'existence).
+    assert api.status_code in (403, 404)
+    assert api.status_code == ui.status_code

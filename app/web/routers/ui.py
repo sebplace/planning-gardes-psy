@@ -58,9 +58,10 @@ from ...services import (
     quota_service,
     security,
     swap_service,
+    visibility_service,
 )
 from ...services.clock import Clock, format_date_fr, format_local
-from ..deps import optional_user, profile_of
+from ..deps import optional_user, profil_medecin_de, profile_of
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(__file__).rsplit("routers", 1)[0] + "templates")
@@ -346,7 +347,7 @@ def set_color(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    profile = profile_of(session, user)
+    profile = profil_medecin_de(session, user)
     submission = session.execute(
         select(Submission).where(Submission.profile_id == profile.id)
         .order_by(Submission.id.desc())
@@ -370,7 +371,7 @@ def validate_campaign(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    profile = profile_of(session, user)
+    profile = profil_medecin_de(session, user)
     submission = session.execute(
         select(Submission).where(Submission.profile_id == profile.id)
         .order_by(Submission.id.desc())
@@ -776,11 +777,12 @@ def handovers(
 ):
     _require(user)
     profile = profile_of(session, user)
-    demandes = list(
-        session.execute(select(HandoverRequest).order_by(HandoverRequest.id.desc())).scalars()
-    )
+    # Filtrage **côté serveur** : la liste ne contient que les demandes dont la
+    # personne est un acteur légitime, ou celles de la ligne qu'elle supervise.
+    demandes = visibility_service.reprises_visibles(session, user)
     visibles = [
-        (d, handover_service.requester_visible_to(user, d)) for d in demandes
+        (d, visibility_service.details_reprise_visibles(session, user, d))
+        for d in demandes
     ]
     sollicitations = []
     mes_gardes = []
@@ -809,7 +811,8 @@ def handovers(
         ).all()
     return render(request, "reprises.html", user, "reprises",
                   demandes=visibles, sollicitations=sollicitations,
-                  mes_gardes=mes_gardes, profile=profile)
+                  mes_gardes=mes_gardes, profile=profile,
+                  contrat_anonymat=visibility_service.CONTRAT_ANONYMAT)
 
 
 @router.post("/reprises/demander", response_class=HTMLResponse)
@@ -821,7 +824,7 @@ def request_handover_ui(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    profile = profile_of(session, user)
+    profile = profil_medecin_de(session, user)
     assignment = session.get(Assignment, assignment_id)
     try:
         demande = handover_service.request_handover(
@@ -830,8 +833,9 @@ def request_handover_ui(
         handover_service.advance(session, demande)
         session.commit()
         flash(request, "succes",
-              "Demande ouverte. Les personnes éligibles sont sollicitées simultanément "
-              "et anonymement ; le départage se fera par tirage au sort.")
+              "Demande ouverte. Les personnes éligibles sont sollicitées simultanément ; "
+              "la sollicitation ne porte ni votre nom ni votre motif, et le départage "
+              "se fera par tirage au sort.")
     except handover_service.HandoverError as exc:
         session.rollback()
         flash(request, "erreur", str(exc))
@@ -847,9 +851,8 @@ def handover_detail(
 ):
     _require(user)
     demande = session.get(HandoverRequest, request_id)
-    if demande is None:
-        raise HTTPException(404, "Demande inconnue.")
-    visible = handover_service.requester_visible_to(user, demande)
+    visibility_service.assert_reprise_lisible(session, user, demande)
+    details = visibility_service.details_reprise_visibles(session, user, demande)
     tirages = {}
     for wave in demande.waves:
         draw = session.execute(select(Draw).where(Draw.wave_id == wave.id)).scalar_one_or_none()
@@ -857,7 +860,8 @@ def handover_detail(
             tirages[wave.id] = (draw, json.loads(draw.proof_json), json.loads(draw.excluded_json))
     profile = profile_of(session, user)
     return render(request, "reprise_detail.html", user, "reprises",
-                  demande=demande, visible=visible, tirages=tirages, profile=profile)
+                  demande=demande, details=details, tirages=tirages, profile=profile,
+                  contrat_anonymat=visibility_service.CONTRAT_ANONYMAT)
 
 
 @router.post("/reprises/{request_id}/reponse", response_class=HTMLResponse)
@@ -870,8 +874,9 @@ def handover_response(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    profile = profile_of(session, user)
+    profile = profil_medecin_de(session, user)
     wave = session.get(HandoverWave, wave_id)
+    visibility_service.assert_vague_lisible(session, user, wave)
     try:
         if reponse == "favorable":
             handover_service.submit_candidacy(session, wave, profile)
@@ -898,8 +903,11 @@ def handover_advance(
 ):
     _require(user)
     demande = session.get(HandoverRequest, request_id)
-    if demande is None:
-        raise HTTPException(404, "Demande de reprise introuvable.")
+    visibility_service.assert_reprise_lisible(session, user, demande)
+    if not permission_service.may(session, user, permissions.ACTION_OPERATIONNEL):
+        raise HTTPException(
+            403, permission_service.refus(permissions.ACTION_OPERATIONNEL)
+        )
     try:
         # Même garde métier que l'API : le contrôle vit dans le service.
         handover_service.advance(
@@ -923,9 +931,9 @@ def swaps(
 ):
     _require(user)
     profile = profile_of(session, user)
-    propositions = list(
-        session.execute(select(SwapProposal).order_by(SwapProposal.id.desc())).scalars()
-    )
+    # Filtrage côté serveur : on ne liste que les échanges dont la personne est
+    # partie prenante, ou ceux de la ligne qu'elle supervise.
+    propositions = visibility_service.echanges_visibles(session, user)
     mes_gardes = []
     autres_gardes = []
     if profile is not None:
@@ -956,7 +964,7 @@ def propose_swap_ui(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    profile = profile_of(session, user)
+    profile = profil_medecin_de(session, user)
     a = session.get(Assignment, assignment_a_id)
     b = session.get(Assignment, assignment_b_id)
     try:
@@ -981,8 +989,9 @@ def accept_swap_ui(
     session: Session = Depends(get_session),
 ):
     _require(user)
-    profile = profile_of(session, user)
+    profile = profil_medecin_de(session, user)
     proposal = session.get(SwapProposal, swap_id)
+    visibility_service.assert_echange_lisible(session, user, proposal)
     try:
         proposal = swap_service.accept_swap(session, proposal, profile)
         session.commit()

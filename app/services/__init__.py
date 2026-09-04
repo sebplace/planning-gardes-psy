@@ -19,6 +19,7 @@ from . import (  # noqa: F401
     security,
     swap_search_service,
     swap_service,
+    visibility_service,
 )
 
 __all__ = [
@@ -40,4 +41,5 @@ __all__ = [
     "security",
     "swap_search_service",
     "swap_service",
+    "visibility_service",
 ]

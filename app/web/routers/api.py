@@ -35,14 +35,16 @@ from ...services import (
     campaign_service,
     handover_service,
     http_security,
+    permission_service,
     planning_service,
     projection_service,
     quota_service,
     security,
     swap_service,
+    visibility_service,
 )
 from ...services.clock import Clock
-from ..deps import current_user, require_action, require_permission
+from ..deps import current_user, profile_medecin, require_action, require_permission
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
@@ -257,9 +259,15 @@ def planning_detail(
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
+    """Lecture d'une version.
+
+    Lot A, point 2 : un médecin ordinaire ne lit que la version **publiée**.
+    Un brouillon, une version en révision ou remplacée est un document de
+    travail administratif et exige l'action ``BROUILLON``. Le refus emprunte la
+    réponse 404 uniforme pour ne pas révéler l'existence de la version.
+    """
     version = session.get(ScheduleVersion, version_id)
-    if version is None:
-        raise HTTPException(404, "Version inconnue.")
+    visibility_service.assert_version_lisible(session, user, version)
     return {
         "version": version.version_no,
         "etat": version.state.value,
@@ -292,17 +300,12 @@ class HandoverIn(BaseModel):
 @router.post("/handover/requests")
 def create_handover(
     payload: HandoverIn,
-    user: User = Depends(current_user),
+    profile: ProfessionalProfile = Depends(profile_medecin),
     session: Session = Depends(get_session),
 ):
     assignment = session.get(Assignment, payload.assignment_id)
     if assignment is None:
         raise HTTPException(404, "Affectation inconnue.")
-    profile = session.execute(
-        select(ProfessionalProfile).where(ProfessionalProfile.user_id == user.id)
-    ).scalar_one_or_none()
-    if profile is None:
-        raise HTTPException(403, "Aucun profil médical associé à ce compte.")
     try:
         request_obj = handover_service.request_handover(
             session, assignment, profile, comment=payload.comment
@@ -318,17 +321,12 @@ def create_handover(
 @router.post("/handover/waves/{wave_id}/candidacies")
 def candidate(
     wave_id: int,
+    profile: ProfessionalProfile = Depends(profile_medecin),
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     wave = session.get(HandoverWave, wave_id)
-    if wave is None:
-        raise HTTPException(404, "Vague inconnue.")
-    profile = session.execute(
-        select(ProfessionalProfile).where(ProfessionalProfile.user_id == user.id)
-    ).scalar_one_or_none()
-    if profile is None:
-        raise HTTPException(403, "Aucun profil médical associé à ce compte.")
+    visibility_service.assert_vague_lisible(session, user, wave)
     try:
         candidacy = handover_service.submit_candidacy(session, wave, profile)
     except handover_service.HandoverError as exc:
@@ -345,17 +343,38 @@ def candidate(
     }
 
 
+@router.post("/handover/waves/{wave_id}/refus")
+def decline_candidacy(
+    wave_id: int,
+    profile: ProfessionalProfile = Depends(profile_medecin),
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Refus ou retrait explicite. Rend la candidature définitivement non tirable."""
+    wave = session.get(HandoverWave, wave_id)
+    visibility_service.assert_vague_lisible(session, user, wave)
+    try:
+        handover_service.decline(session, wave, profile)
+    except handover_service.HandoverError as exc:
+        session.rollback()
+        raise HTTPException(409, str(exc))
+    session.commit()
+    return {"vague": wave.id, "reponse": "REFUS"}
+
+
 @router.post("/handover/requests/{request_id}/advance")
 def advance_handover(
     request_id: int,
-    user: User = Depends(require_action(permissions.ACTION_OPERATIONNEL)),
+    user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     request_obj = session.get(HandoverRequest, request_id)
-    if request_obj is None:
-        raise HTTPException(404, "Demande inconnue.")
-    # Le périmètre de ligne est vérifié dans le service, donc identiquement en
-    # interface et en API : ce chemin ne peut plus contourner le contrôle.
+    # Ordre volontaire : d'abord le périmètre de lecture (404 uniforme, aucune
+    # fuite d'existence), ensuite seulement l'action nommée puis le périmètre de
+    # ligne (403 explicites, car la personne sait déjà que la demande existe).
+    visibility_service.assert_reprise_lisible(session, user, request_obj)
+    if not permission_service.may(session, user, permissions.ACTION_OPERATIONNEL):
+        raise HTTPException(403, permission_service.refus(permissions.ACTION_OPERATIONNEL))
     try:
         handover_service.advance(
             session, request_obj, actor=user, enforce_permissions=True
@@ -376,15 +395,22 @@ def handover_detail(
     session: Session = Depends(get_session),
 ):
     request_obj = session.get(HandoverRequest, request_id)
-    if request_obj is None:
-        raise HTTPException(404, "Demande inconnue.")
-    visible = handover_service.requester_visible_to(user, request_obj)
+    visibility_service.assert_reprise_lisible(session, user, request_obj)
+    details = visibility_service.details_reprise_visibles(session, user, request_obj)
     occurrence = request_obj.assignment.post.occurrence
     return {
         "demande": request_obj.id,
         "etat": request_obj.state.value,
-        # L'identité du demandeur reste masquée jusqu'à l'attribution officialisée.
-        "demandeur": request_obj.requester.code if visible else "masqué",
+        # Contrat d'anonymat honnête (lot A, point 4) : le planning publié est
+        # nominatif, donc l'application ne prétend pas masquer le titulaire.
+        # Ce qui est réellement garanti : la sollicitation ne porte ni nom ni
+        # motif, et le commentaire reste réservé au demandeur et aux
+        # responsables compétents.
+        "titulaire_actuel": request_obj.assignment.profile.code,
+        "demandeur": request_obj.requester.code,
+        "commentaire": request_obj.comment if details else None,
+        "motif_administratif": request_obj.admin_motive if details else None,
+        "contrat_anonymat": visibility_service.CONTRAT_ANONYMAT,
         "date": occurrence.local_date.isoformat(),
         "ligne": request_obj.assignment.post.line.value,
         "vagues": [
@@ -409,8 +435,7 @@ def draw_detail(
     import json
 
     draw = session.get(Draw, draw_id)
-    if draw is None:
-        raise HTTPException(404, "Tirage inconnu.")
+    visibility_service.assert_tirage_lisible(session, user, draw)
     return {
         "tirage": draw.id,
         "execute_le": draw.executed_at.isoformat(),
@@ -434,18 +459,13 @@ class SwapIn(BaseModel):
 @router.post("/swaps")
 def propose_swap(
     payload: SwapIn,
-    user: User = Depends(current_user),
+    profile: ProfessionalProfile = Depends(profile_medecin),
     session: Session = Depends(get_session),
 ):
     a = session.get(Assignment, payload.assignment_a_id)
     b = session.get(Assignment, payload.assignment_b_id)
     if a is None or b is None:
         raise HTTPException(404, "Affectation inconnue.")
-    profile = session.execute(
-        select(ProfessionalProfile).where(ProfessionalProfile.user_id == user.id)
-    ).scalar_one_or_none()
-    if profile is None:
-        raise HTTPException(403, "Aucun profil médical associé à ce compte.")
     try:
         proposal = swap_service.propose_swap(session, a, b, profile)
     except swap_service.SwapError as exc:
@@ -459,18 +479,34 @@ def propose_swap(
     }
 
 
-@router.post("/swaps/{swap_id}/accept")
-def accept_swap(
+@router.get("/swaps/{swap_id}")
+def swap_detail(
     swap_id: int,
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     proposal = session.get(SwapProposal, swap_id)
-    if proposal is None:
-        raise HTTPException(404, "Proposition inconnue.")
-    profile = session.execute(
-        select(ProfessionalProfile).where(ProfessionalProfile.user_id == user.id)
-    ).scalar_one_or_none()
+    visibility_service.assert_echange_lisible(session, user, proposal)
+    return {
+        "echange": proposal.id,
+        "etat": proposal.state.value,
+        "garde_a": proposal.assignment_a_id,
+        "garde_b": proposal.assignment_b_id,
+        "motif_refus": proposal.refusal_reason,
+        "accord_a": proposal.accepted_a_at.isoformat() if proposal.accepted_a_at else None,
+        "accord_b": proposal.accepted_b_at.isoformat() if proposal.accepted_b_at else None,
+    }
+
+
+@router.post("/swaps/{swap_id}/accept")
+def accept_swap(
+    swap_id: int,
+    profile: ProfessionalProfile = Depends(profile_medecin),
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    proposal = session.get(SwapProposal, swap_id)
+    visibility_service.assert_echange_lisible(session, user, proposal)
     try:
         proposal = swap_service.accept_swap(session, proposal, profile)
     except swap_service.SwapError as exc:

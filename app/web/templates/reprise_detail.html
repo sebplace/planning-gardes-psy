@@ -9,12 +9,13 @@
     — {{ demande.assignment.post.occurrence.garde_type.label }},
     {{ demande.assignment.post.line.value }}<br>
     État : <span class="etiquette neutre">{{ demande.state.value }}</span><br>
-    Demandeur :
-    {% if visible %}{{ demande.requester.code }}
-    {% else %}<span class="etiquette neutre">🔒 masqué jusqu'à l'attribution officialisée</span>{% endif %}<br>
     Titulaire actuel : <strong>{{ demande.assignment.profile.code }}</strong>
-    <span class="aide">(la garde reste à sa charge tant qu'aucun remplacement n'est confirmé)</span>
+    <span class="aide">(la garde reste à sa charge tant qu'aucun remplacement n'est confirmé)</span><br>
+    Commentaire :
+    {% if details %}{{ demande.comment or '—' }}
+    {% else %}<span class="etiquette neutre">réservé au demandeur et aux responsables compétents</span>{% endif %}
   </p>
+  <p class="aide">{{ contrat_anonymat }}</p>
 </div>
 
 {% for wave in demande.waves %}
@@ -75,7 +76,7 @@
         <dt>Vérification</dt><dd>{{ preuve.verification }}</dd>
       </dl>
     </details>
-    {% if exclusions %}
+    {% if exclusions and details %}
     <h4>Candidatures écartées à la revérification</h4>
     <ul>
       {% for exclusion in exclusions %}
@@ -90,11 +91,12 @@
   <ul>
     {% for candidacy in wave.candidacies %}
     <li>
-      {% if user.is_admin or demande.state.value == 'ATTRIBUEE' %}
+      {% if details or demande.state.value == 'ATTRIBUEE' or (profile and candidacy.profile_id == profile.id) %}
         {{ candidacy.profile.code }}
       {% else %}<span class="aide">candidature anonyme</span>{% endif %}
       — <span class="etiquette neutre">{{ candidacy.state.value }}</span>
-      {% if candidacy.exclusion_reason %}<br><span class="aide">{{ candidacy.exclusion_reason }}</span>{% endif %}
+      {% if candidacy.exclusion_reason and (details or (profile and candidacy.profile_id == profile.id)) %}
+      <br><span class="aide">{{ candidacy.exclusion_reason }}</span>{% endif %}
     </li>
     {% endfor %}
   </ul>

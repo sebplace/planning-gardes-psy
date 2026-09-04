@@ -28,7 +28,7 @@ from app.models import (
     WaveSolicitation,
     WaveState,
 )
-from app.services import handover_service, swap_service
+from app.services import handover_service, swap_service, visibility_service
 from app.services.clock import Clock
 from tests.conftest import publish_plan
 
@@ -91,18 +91,44 @@ def test_12_49_52_anonymat_et_exclusion_du_demandeur(world):
         assert titulaire.code not in message.body
         assert titulaire.code not in message.subject
 
-    # 52 — identité masquée pour un tiers tant que l'attribution n'est pas officialisée.
+    # 52 — contrat d'anonymat honnête (lot A, point 4) : la sollicitation ne porte
+    # ni nom ni motif, mais l'application ne prétend plus masquer le titulaire,
+    # que le planning publié rend de toute façon visible. Ce qui reste réellement
+    # restreint : le commentaire et les détails administratifs.
     tiers = next(p for p in solicites if p.id != titulaire.id)
-    assert handover_service.requester_visible_to(world.user_of(tiers), demande) is False
-    assert handover_service.requester_visible_to(world.admin, demande) is True
+    assert (
+        visibility_service.details_reprise_visibles(
+            session, world.user_of(tiers), demande
+        )
+        is False
+    )
+    assert (
+        visibility_service.details_reprise_visibles(session, world.admin, demande)
+        is True
+    )
+    # Le tiers sollicité peut lire la demande : il est un acteur légitime.
+    assert (
+        visibility_service.reprise_lisible(session, world.user_of(tiers), demande)
+        is True
+    )
 
     for profile in solicites:
         handover_service.submit_candidacy(session, wave, profile)
     handover_service.advance(session, demande)
     session.refresh(demande)
     assert demande.state is HandoverState.ATTRIBUEE
-    # Après l'attribution officialisée, l'identité redevient visible.
-    assert handover_service.requester_visible_to(world.user_of(tiers), demande) is True
+    # Après l'attribution officialisée, tout acteur légitime lit la demande ; le
+    # commentaire, lui, reste réservé au demandeur et aux responsables.
+    assert (
+        visibility_service.reprise_lisible(session, world.user_of(tiers), demande)
+        is True
+    )
+    assert (
+        visibility_service.details_reprise_visibles(
+            session, world.user_of(tiers), demande
+        )
+        is False
+    )
 
 
 # --------------------------------------------------------------------------- #

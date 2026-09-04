@@ -41,10 +41,39 @@ def test_health_ready(world):
 
 
 def test_avancement_reprise_refuse_au_medecin(world):
+    """Un médecin ordinaire ne fait pas avancer une reprise.
+
+    Depuis le lot A, l'ordre de contrôle est : périmètre de lecture d'abord
+    (404 uniforme, sans fuite d'existence), action nommée ensuite (403). Sur un
+    identifiant inexistant, les deux personnes reçoivent donc le même 404 ; ce
+    qui distingue le médecin ordinaire se prouve sur une demande **réelle**.
+    """
+    from tests.conftest import publish_plan
+
     client = _client()
     _login(client, world.user_of(world.seniors[0]).email)  # médecin non admin
-    r = client.post("/api/v1/handover/requests/999999/advance")
-    assert r.status_code == 403
+    assert client.post(
+        "/api/v1/handover/requests/999999/advance"
+    ).status_code == 404
+
+    publish_plan(world)
+    affectation = next(
+        a
+        for a in sorted(
+            world.version.assignments, key=lambda a: a.post.occurrence.start_at
+        )
+        if a.profile_id == world.seniors[0].id
+    )
+    from app.services import handover_service
+
+    demande = handover_service.request_handover(
+        world.session, affectation, world.seniors[0]
+    )
+    world.session.commit()
+    # Le demandeur est un acteur légitime : il voit la demande, mais il ne
+    # détient pas l'action opérationnelle.
+    refus = client.post(f"/api/v1/handover/requests/{demande.id}/advance")
+    assert refus.status_code == 403, refus.text
 
 
 def test_avancement_reprise_admin_passe_l_autorisation(world):

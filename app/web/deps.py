@@ -54,9 +54,19 @@ def profile_medecin(
 ) -> ProfessionalProfile:
     """Profil professionnel **actif** de l'utilisateur courant.
 
-    Lot 5, point 7 du contre-audit : la révocation de ``is_medecin`` doit être
-    appliquée à **tous** les points d'entrée métier, pas seulement à l'écran de
-    connexion. Cette dépendance est le point unique de vérification.
+    Lot 5, point 7 puis lot A, point 1 du contre-audit : la révocation de
+    ``is_medecin`` doit être appliquée à **tous** les points d'entrée métier,
+    API comme interface. Cette dépendance est le point unique de vérification ;
+    aucune route ne doit relire ``ProfessionalProfile`` par elle-même.
+    """
+    return profil_medecin_de(session, user)
+
+
+def profil_medecin_de(session: Session, user: User) -> ProfessionalProfile:
+    """Version appelable hors injection FastAPI (interface web).
+
+    Lève ``HTTPException(403)`` dès que le compte n'est plus médecin ou n'a
+    plus de profil professionnel rattaché, sans jamais retourner ``None``.
     """
     if not user.is_medecin:
         raise HTTPException(

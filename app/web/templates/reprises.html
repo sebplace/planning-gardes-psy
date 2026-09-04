@@ -7,7 +7,11 @@
   <h2>Comment fonctionne une reprise</h2>
   <ol>
     <li>La demande est diffusée <strong>simultanément</strong> à toutes les personnes éligibles.</li>
-    <li>L'identité du demandeur reste <strong>masquée</strong> jusqu'à l'attribution officialisée.</li>
+    <li>La sollicitation ne mentionne <strong>ni le nom du demandeur ni son motif</strong>.
+        Le planning publié restant nominatif, l'application ne prétend pas rendre le
+        titulaire indevinable : elle garantit que le message envoyé n'expose ni identité
+        ni motif, et que les commentaires restent réservés au demandeur et aux
+        responsables compétents.</li>
     <li>Toutes les réponses favorables sont collectées pendant une fenêtre adaptée à la
         proximité de la garde. <strong>Répondre plus vite ne procure aucun avantage.</strong></li>
     <li>La liste est figée, chaque candidature est revérifiée, puis un
@@ -66,17 +70,19 @@
     <table>
       <thead>
         <tr><th scope="col">#</th><th scope="col">Date de garde</th><th scope="col">Ligne</th>
-            <th scope="col">Demandeur</th><th scope="col">État</th><th scope="col"></th></tr>
+            <th scope="col">Titulaire actuel</th><th scope="col">Commentaire</th>
+            <th scope="col">État</th><th scope="col"></th></tr>
       </thead>
       <tbody>
-        {% for demande, visible in demandes %}
+        {% for demande, details in demandes %}
         <tr>
           <td>{{ demande.id }}</td>
           <td>{{ demande.assignment.post.occurrence.local_date }}</td>
           <td>{{ demande.assignment.post.line.value }}</td>
-          <td>
-            {% if visible %}{{ demande.requester.code }}
-            {% else %}<span class="etiquette neutre">🔒 masqué</span>{% endif %}
+          <td>{{ demande.assignment.profile.code }}</td>
+          <td class="aide">
+            {% if details %}{{ demande.comment or '—' }}
+            {% else %}<span class="etiquette neutre">réservé</span>{% endif %}
           </td>
           <td><span class="etiquette neutre">{{ demande.state.value }}</span></td>
           <td><a href="/reprises/{{ demande.id }}">Détail</a></td>

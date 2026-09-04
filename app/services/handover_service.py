@@ -10,7 +10,9 @@ Principes appliqués sans exception :
   * la liste est **figée** avant tout aléa, puis chaque candidature est revérifiée ;
   * un seul tirage officiel est possible (contrainte d'unicité + transition gardée) ;
   * le résultat est **immédiatement officiel**, sans validation administrative ;
-  * l'identité du demandeur reste masquée jusqu'à l'attribution officialisée.
+  * la sollicitation ne mentionne **ni le nom du demandeur ni son motif** ; le
+    planning publié étant nominatif, l'application ne prétend pas rendre le
+    titulaire indevinable (lot A, point 4 du contre-audit du 04/09/2026).
 """
 
 from __future__ import annotations
@@ -133,16 +135,12 @@ def _context(session: Session, request: HandoverRequest, wave: HandoverWave | No
     }
 
 
-def requester_visible_to(user: User | None, request: HandoverRequest) -> bool:
-    """L'identité du demandeur n'est visible que des administrateurs, et de tous
-    seulement après l'attribution officialisée."""
-    if user is None:
-        return False
-    if user.is_admin:
-        return True
-    if request.state is HandoverState.ATTRIBUEE:
-        return True
-    return request.requester.user_id == user.id
+#: Le masquage du demandeur était une fausse promesse : le planning publié étant
+#: nominatif, le titulaire d'une garde reste déductible. Le périmètre de lecture
+#: réel est porté par ``visibility_service`` ; le contrat effectivement tenu est
+#: ``visibility_service.CONTRAT_ANONYMAT``. La fonction ``requester_visible_to``
+#: a donc été retirée plutôt que conservée sous une forme trompeuse
+#: (lot A, point 4 du contre-audit du 04/09/2026).
 
 
 # --------------------------------------------------------------------------- #
