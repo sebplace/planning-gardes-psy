@@ -16,6 +16,7 @@ from . import (  # noqa: F401
     quota_service,
     rest_service,
     security,
+    swap_search_service,
     swap_service,
 )
 
@@ -35,5 +36,6 @@ __all__ = [
     "quota_service",
     "rest_service",
     "security",
+    "swap_search_service",
     "swap_service",
 ]
