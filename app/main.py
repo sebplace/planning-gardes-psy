@@ -58,6 +58,13 @@ def create_app() -> FastAPI:
         L'API JSON en est exemptée : elle n'est pas soumise à une navigation
         ambiante et reste protégée par ``SameSite=Lax`` et l'absence de
         formulaire HTML.
+
+        Point corrigé par la recette navigateur du lot F : lire le formulaire
+        ici **consommait** le corps de la requête, et la route en aval ne
+        recevait plus aucun champ. Le corps est désormais lu une seule fois puis
+        **rejoué** pour la suite du traitement. Les tests ne l'avaient pas vu
+        parce qu'ils transmettent le jeton par en-tête, chemin qui ne lit pas le
+        corps.
         """
         chemin = request.url.path
         if (
@@ -67,11 +74,19 @@ def create_app() -> FastAPI:
         ):
             fourni = request.headers.get(http_security.ENTETE_CSRF)
             if fourni is None:
-                try:
-                    formulaire = await request.form()
-                    fourni = formulaire.get(http_security.CHAMP_CSRF)
-                except Exception:  # pragma: no cover - corps illisible
-                    fourni = None
+                corps = await request.body()
+
+                async def _rejouer() -> dict:
+                    return {
+                        "type": "http.request",
+                        "body": corps,
+                        "more_body": False,
+                    }
+
+                request._receive = _rejouer  # noqa: SLF001 - rejeu explicite
+                fourni = http_security.jeton_du_corps(
+                    corps, request.headers.get("content-type", "")
+                )
             if not http_security.csrf_valide(request.session, fourni):
                 return HTMLResponse(
                     "<p>Requête refusée : jeton anti-rejeu absent ou invalide.</p>"

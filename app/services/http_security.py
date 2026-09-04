@@ -25,6 +25,7 @@ import secrets
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from urllib.parse import parse_qs
 
 CLE_CSRF = "csrf"
 CHAMP_CSRF = "csrf_token"
@@ -76,6 +77,36 @@ def rotation_csrf(session_navigateur: dict) -> str:
     """Régénère le jeton, par exemple après une connexion réussie."""
     session_navigateur.pop(CLE_CSRF, None)
     return jeton_csrf(session_navigateur)
+
+
+def jeton_du_corps(corps: bytes, content_type: str) -> str | None:
+    """Extrait le jeton anti-rejeu d'un corps de formulaire **déjà lu**.
+
+    Le contrôle CSRF doit lire le corps sans le consommer pour la route en aval.
+    Le corps est donc lu une seule fois par la couche HTTP, puis analysé ici.
+    Deux encodages sont couverts : formulaire simple et formulaire multipart.
+    """
+    if not corps:
+        return None
+    type_bas = (content_type or "").lower()
+    if "application/x-www-form-urlencoded" in type_bas:
+        champs = parse_qs(corps.decode("utf-8", errors="replace"))
+        valeurs = champs.get(CHAMP_CSRF)
+        return valeurs[0] if valeurs else None
+    if "multipart/form-data" in type_bas:
+        texte = corps.decode("utf-8", errors="replace")
+        marqueur = f'name="{CHAMP_CSRF}"'
+        position = texte.find(marqueur)
+        if position == -1:
+            return None
+        reste = texte[position + len(marqueur):]
+        separateur = reste.find("\r\n\r\n")
+        if separateur == -1:
+            return None
+        valeur = reste[separateur + 4:]
+        fin = valeur.find("\r\n")
+        return valeur[:fin] if fin != -1 else valeur.strip()
+    return None
 
 
 # --------------------------------------------------------------------------- #
