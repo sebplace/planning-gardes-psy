@@ -38,6 +38,7 @@
 <div class="carte">
   <h2>Demander une reprise pour une de mes gardes</h2>
   <form method="post" action="/reprises/demander">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
     <p>
       <label for="assignment_id">Garde concernée</label>
       <select id="assignment_id" name="assignment_id" required>

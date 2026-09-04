@@ -26,6 +26,7 @@
 <div class="carte">
   <h2>Proposer un échange</h2>
   <form method="post" action="/echanges/proposer">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
     <p>
       <label for="a">Ma garde</label>
       <select id="a" name="assignment_a_id" required>
@@ -82,6 +83,7 @@
                   and profile.id in [proposition.assignment_a.profile_id,
                                      proposition.assignment_b.profile_id] %}
             <form method="post" action="/echanges/{{ proposition.id }}/accepter">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
               <button type="submit">Accepter</button>
             </form>
             {% else %}—{% endif %}

@@ -67,6 +67,16 @@ class Settings(BaseSettings):
             url = "postgresql+psycopg://" + url[len("postgresql://"):]
         if url.startswith("postgresql+psycopg://") and "sslmode=" not in url:
             url += ("&" if "?" in url else "?") + "sslmode=require"
+        # Lot 5, point 10 : `sslmode=disable` est refusé hors démonstration.
+        # Une base managée impose TLS ; l'accepter silencieusement en
+        # préproduction ou en production exposerait le trafic.
+        if "sslmode=disable" in url:
+            env = (self.environment or "").strip().lower()
+            if env not in {"demonstration", "demo", "démonstration", "démo"}:
+                raise ValueError(
+                    "sslmode=disable est refusé hors environnement de "
+                    "démonstration : le transport vers la base doit être chiffré."
+                )
         self.database_url = url
         return self
 

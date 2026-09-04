@@ -84,6 +84,7 @@
   {% endif %}
 
   <form method="post" action="/admin/execution/{{ run.id }}/retenir">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
     <input type="hidden" name="proposal_id" value="{{ p.id }}">
     <button type="submit">Retenir cette variante pour révision</button>
   </form>

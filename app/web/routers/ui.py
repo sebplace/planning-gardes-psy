@@ -50,6 +50,7 @@ from ...services import (
     audit_service,
     campaign_service,
     handover_service,
+    http_security,
     notification_service,
     permission_service,
     planning_service,
@@ -105,6 +106,8 @@ def render(request: Request, template: str, user: User | None, page: str, **cont
             "format_date_fr": format_date_fr,
             "format_local": format_local,
             "now": Clock.now(),
+            "csrf_token": http_security.jeton_csrf(request.session),
+            "csrf_field": http_security.CHAMP_CSRF,
             **context,
         },
     )
@@ -141,18 +144,73 @@ def login_submit(
     mot_de_passe: str = Form(...),
     session: Session = Depends(get_session),
 ):
+    adresse = request.client.host if request.client else "?"
+
+    # Bornes d'entrée avant tout traitement coûteux.
+    hors_bornes = http_security.identifiants_hors_bornes(email, mot_de_passe)
+    if hors_bornes is not None:
+        audit_service.record(
+            session, "AUTHENTIFICATION_REFUSEE", "user", 0,
+            {"motif": hors_bornes, "adresse": adresse}, actor_label="ANONYME",
+        )
+        session.commit()
+        flash(request, "erreur", "Identifiants invalides.")
+        return RedirectResponse("/connexion", status_code=303)
+
+    # Limitation de débit : par identifiant et par adresse.
+    blocage = http_security.limiteur.bloque(email, adresse)
+    if blocage is not None:
+        audit_service.record(
+            session, "AUTHENTIFICATION_LIMITEE", "user", 0,
+            {"motif": blocage, "adresse": adresse}, actor_label="ANONYME",
+        )
+        session.commit()
+        flash(
+            request,
+            "erreur",
+            "Trop de tentatives. Patientez quelques minutes avant de réessayer.",
+        )
+        return RedirectResponse("/connexion", status_code=303)
+
+    http_security.limiteur.enregistrer_tentative(adresse)
     user = security.authenticate(session, email, mot_de_passe)
     if user is None:
+        http_security.limiteur.enregistrer_echec(email)
+        audit_service.record(
+            session, "AUTHENTIFICATION_ECHEC", "user", 0,
+            {"adresse": adresse}, actor_label="ANONYME",
+        )
+        session.commit()
         flash(request, "erreur", "Identifiants invalides. Comptes de démonstration : mot de passe « demo ».")
         return RedirectResponse("/connexion", status_code=303)
+
+    http_security.limiteur.reinitialiser(email)
+    # Session neuve : horodatages remis à zéro et jeton anti-rejeu renouvelé,
+    # ce qui empêche la fixation de session.
+    request.session.clear()
+    http_security.ouvrir_session(request.session)
     request.session["user_id"] = user.id
+    audit_service.record(
+        session, "AUTHENTIFICATION_SUCCES", "user", user.id,
+        {"adresse": adresse}, actor=user,
+    )
+    session.commit()
     return RedirectResponse("/modules", status_code=303)
 
 
-@router.get("/deconnexion")
+@router.post("/deconnexion")
 def logout(request: Request):
+    """Déconnexion par POST, protégée par le jeton anti-rejeu."""
     request.session.clear()
     return RedirectResponse("/connexion", status_code=303)
+
+
+@router.get("/deconnexion")
+def logout_refuse():
+    """Une déconnexion par simple lien serait déclenchable par un tiers."""
+    raise HTTPException(
+        405, "La déconnexion se fait par POST, avec le jeton anti-rejeu."
+    )
 
 
 @router.get("/modules", response_class=HTMLResponse)

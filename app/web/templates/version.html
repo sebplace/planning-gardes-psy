@@ -16,15 +16,18 @@
   </p>
   {% if version.state.value in ('GENERE', 'EN_REVISION') %}
   <form method="post" action="/admin/version/{{ version.id }}/action" style="display:inline">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
     <input type="hidden" name="action" value="valider">
     <button type="submit">Valider le planning</button>
   </form>
   <form method="post" action="/admin/version/{{ version.id }}/action" style="display:inline">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
     <input type="hidden" name="action" value="regenerer">
     <button type="submit" class="secondaire">Régénérer en conservant les verrous</button>
   </form>
   {% elif version.state.value == 'VALIDE' %}
   <form method="post" action="/admin/version/{{ version.id }}/action">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
     <input type="hidden" name="action" value="publier">
     <button type="submit">Publier ce planning</button>
   </form>
@@ -56,6 +59,7 @@
         </td>
         <td>
           <form method="post" action="/admin/version/{{ version.id }}/action">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
             <input type="hidden" name="post_id" value="{{ post.id }}">
             <input type="hidden" name="action"
                    value="{{ 'deverrouiller' if assignment.is_locked else 'verrouiller' }}">
@@ -69,6 +73,7 @@
           <details>
             <summary>Modifier</summary>
             <form method="post" action="/admin/version/{{ version.id }}/corriger">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
               <input type="hidden" name="post_id" value="{{ post.id }}">
               <label for="p-{{ post.id }}">Nouvelle personne</label>
               <select id="p-{{ post.id }}" name="profile_id">

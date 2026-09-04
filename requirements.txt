@@ -1,22 +1,39 @@
-# Prototype — dépendances minimales, sans extension native à compiler.
-fastapi>=0.115
-uvicorn>=0.30
-sqlalchemy>=2.0
-alembic>=1.13
-jinja2>=3.1
-python-multipart>=0.0.9
-pydantic-settings>=2.2
-itsdangerous>=2.2
-openpyxl>=3.1
-tzdata>=2024.1
+# Dependances du prototype, **versions epinglees** (lot 5, point 10).
+#
+# Aucune extension native a compiler : la plateforme de developpement est en
+# win-arm64 et ne dispose pas de compilateur C.
+#
+# Les versions ci-dessous sont exactement celles utilisees pour produire les
+# resultats de tests livres. Un contre-audit obtient donc le meme arbre de
+# dependances, condition necessaire a la reproductibilite.
+
+fastapi==0.141.1
+starlette==1.6.0
+uvicorn==0.52.4
+sqlalchemy==2.0.52
+alembic==1.19.1
+jinja2==3.1.6
+python-multipart==0.0.32
+pydantic==2.13.4
+pydantic-settings==2.15.0
+itsdangerous==2.2.0
+openpyxl==3.1.5
+tzdata==2026.3
+anyio==4.14.2
 
 # Tests
-pytest>=8.0
-httpx>=0.27
+pytest==9.1.1
+httpx==0.28.1
 
-# Pilote PostgreSQL (production / Scalingo). Roues precompilees (aucun compilateur requis).
-psycopg[binary]>=3.1
+# Pilote PostgreSQL de production (Scalingo, Linux x86-64).
+# Roues precompilees, aucun compilateur requis sur la cible.
+psycopg[binary]==3.2.13
+
+# Pilote PostgreSQL **pur Python**, utilise pour la campagne de concurrence
+# reelle sur la plateforme de developpement win-arm64, pour laquelle psycopg ne
+# publie pas de roue binaire. Non utilise en production.
+pg8000==1.31.5
 
 # Optionnel : solveur CP-SAT. Non installable sur Windows ARM64 ; le moteur
-# déterministe intégré prend le relais (voir DECISIONS.md D-003).
+# deterministe integre prend le relais (voir DECISIONS.md D-003).
 # ortools>=9.10

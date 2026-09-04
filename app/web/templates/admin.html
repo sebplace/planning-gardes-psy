@@ -49,6 +49,7 @@
       </div>
     {% else %}
       <form method="post" action="/admin/generer" class="carte">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
         <h3>{{ quarter.label }}</h3>
         <input type="hidden" name="quarter_id" value="{{ quarter.id }}">
         <p>

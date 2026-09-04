@@ -43,6 +43,10 @@ class RestError(Exception):
     pass
 
 
+#: Jour d'ancrage d'une demande de week-end complet.
+SAMEDI = 5
+
+
 # --------------------------------------------------------------------------- #
 # Demandes explicites de bloc continu (week-end complet)
 # --------------------------------------------------------------------------- #
@@ -59,7 +63,26 @@ def request_weekend_block(
 
     L'application ne crée jamais cette demande d'elle-même : sans elle, tout bloc
     de service continu dépassant le maximum est refusé par la contrainte ferme.
+
+    Deux restrictions ajoutées après le contre-audit du 04/09/2026 (lot 5,
+    point 9) :
+
+    * seule la personne concernée peut formuler la demande ; un administrateur
+      ne peut pas la déposer à sa place ;
+    * la date d'ancrage doit être un **samedi**, la demande couvrant alors
+      exactement les deux occurrences du samedi et du dimanche.
     """
+    if requested_by is not None and requested_by.id != profile.user_id:
+        raise RestError(
+            "Une demande de bloc continu n'est valable que si elle est formulée "
+            "par la personne concernée elle-même."
+        )
+    if anchor_date.weekday() != SAMEDI:
+        raise RestError(
+            "La demande de week-end complet s'ancre sur un samedi ; elle couvre "
+            "alors exactement le samedi et le dimanche."
+        )
+
     existing = session.execute(
         select(WeekendBlockRequest).where(
             WeekendBlockRequest.profile_id == profile.id,
@@ -137,9 +160,34 @@ def declare_on_site(
     Rien n'est présumé : sans déclaration, une garde ne vaut aucune heure sur
     place. Un simple appel traité à distance (``moved_on_site`` faux) n'ouvre
     jamais de droit, quelle que soit la durée déclarée.
+
+    Trois contrôles de cohérence ajoutés après le contre-audit du 04/09/2026
+    (lot 5, point 8) : la déclaration doit porter sur une garde **détenue par la
+    personne**, **déjà terminée**, et le nombre d'heures déclarées ne peut pas
+    dépasser la durée réelle de la garde.
     """
     if hours_on_site < 0:
         raise RestError("Le nombre d'heures déclarées ne peut pas être négatif.")
+
+    occurrence = _occurrence_of(session, assignment)
+    if assignment.profile_id != profile.id:
+        raise RestError(
+            "Une déclaration de présence ne peut porter que sur une garde "
+            "réellement détenue par la personne."
+        )
+    if occurrence is None:
+        raise RestError("Garde introuvable : déclaration refusée.")
+    if occurrence.end_at > Clock.now():
+        raise RestError(
+            "La garde n'est pas terminée : une présence ne peut pas être "
+            "déclarée à l'avance."
+        )
+    duree_reelle = (occurrence.end_at - occurrence.start_at).total_seconds() / 3600.0
+    if hours_on_site > duree_reelle + 1e-6:
+        raise RestError(
+            f"{hours_on_site:g} h déclarées pour une garde qui en dure "
+            f"{duree_reelle:g} : valeur invraisemblable, déclaration refusée."
+        )
 
     report = OnSiteReport(
         assignment_id=assignment.id,

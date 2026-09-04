@@ -152,11 +152,16 @@ def enqueue(
         sent_at=Clock.now(),  # « envoi » simulé immédiat dans la boîte locale
         anonymised=anonymised,
     )
+    # Point de contre-audit (04/09/2026) : une collision d'idempotence ne doit
+    # **jamais** annuler l'opération métier en cours. On isole donc l'insertion
+    # dans un savepoint : seule la notification en conflit est annulée, la
+    # transaction métier se poursuit intacte.
+    point = session.begin_nested()
     session.add(notification)
     try:
-        session.flush()
+        point.commit()
     except IntegrityError:
-        session.rollback()
+        point.rollback()
         return None
     return notification
 

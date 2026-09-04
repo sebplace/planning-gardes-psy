@@ -53,6 +53,7 @@ from ..models import (
     QuotaAdjustment,
     QuotaCategory,
     QuotaTarget,
+    RecoveryProposal,
     RestRule,
     RuleProfileRow,
     ScheduleState,
@@ -368,6 +369,24 @@ def busy_intervals(
                 start_at=occurrence.start_at,
                 end_at=occurrence.end_at,
                 label=f"{garde_type.label} du {occurrence.local_date.isoformat()}",
+            )
+        )
+
+    # Récupérations **validées** : elles occupent réellement la personne et
+    # doivent donc contraindre le moteur (lot 5, point 8 du contre-audit du
+    # 04/09/2026). Une proposition non tranchée n'a aucun effet.
+    for recuperation in session.execute(
+        select(RecoveryProposal).where(RecoveryProposal.state == "VALIDEE")
+    ).scalars():
+        out.append(
+            BusyIntervalIn(
+                profile_id=recuperation.profile_id,
+                start_at=recuperation.starts_at,
+                end_at=recuperation.ends_at,
+                label=(
+                    f"récupération validée de {recuperation.hours:g} h "
+                    f"({recuperation.starts_at.date().isoformat()})"
+                ),
             )
         )
     return out

@@ -77,6 +77,7 @@
           {% endif %}
           {% if submission.state.value in ('NON_COMMENCEE', 'BROUILLON') %}
           <form method="post" action="/campagne/couleur">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
             <input type="hidden" name="occurrence_id" value="{{ occurrence.id }}">
             <button type="submit" name="couleur" value="VERT"
                     aria-label="Marquer vert le {{ occurrence.local_date }}">V</button>
@@ -94,6 +95,7 @@
 
 {% if submission.state.value in ('NON_COMMENCEE', 'BROUILLON') %}
 <form method="post" action="/campagne/valider" class="carte">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
   <h2>Valider ma réponse</h2>
   <p class="aide">Après validation, vous ne recevrez plus de rappel. Une réouverture par un
     administrateur est possible, et elle est tracée.</p>

@@ -6,6 +6,7 @@ Base SQLite dédiée, données fictives réduites pour la rapidité.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -160,6 +161,61 @@ def session():
         db.rollback()
         db.close()
         Clock.reset()
+
+
+@pytest.fixture(autouse=True)
+def _durcissement_http(monkeypatch):
+    """Rend le durcissement HTTP compatible avec les tests, sans le neutraliser.
+
+    Deux ajustements, tous deux **explicites** :
+
+    1. le limiteur de débit est vidé entre les tests, sinon les connexions
+       répétées d'une suite complète déclencheraient un blocage légitime mais
+       hors sujet ;
+    2. les requêtes non sûres de ``TestClient`` vers l'interface reçoivent
+       automatiquement le jeton anti-rejeu, comme le ferait un navigateur qui a
+       chargé la page. Le contrôle CSRF reste **actif** : les tests qui le
+       visent explicitement passent un jeton absent ou faux.
+    """
+    from starlette.testclient import TestClient
+
+    from app.services import http_security
+
+    http_security.limiteur.vider()
+
+    original = TestClient.request
+
+    def request(self, method, url, *args, **kwargs):
+        chemin = str(url)
+        non_sure = method.upper() in ("POST", "PUT", "PATCH", "DELETE")
+        interface = not chemin.startswith("/api/") and not chemin.startswith(
+            "/health/"
+        )
+        entetes = kwargs.get("headers") or {}
+        deja_fourni = any(
+            k.lower() == http_security.ENTETE_CSRF.lower() for k in entetes
+        )
+        donnees = kwargs.get("data") or {}
+        dans_le_formulaire = (
+            isinstance(donnees, dict) and http_security.CHAMP_CSRF in donnees
+        )
+        if non_sure and interface and not deja_fourni and not dans_le_formulaire:
+            jeton = getattr(self, "_jeton_csrf", None)
+            if jeton is None:
+                page = original(self, "GET", "/connexion")
+                trouve = re.search(
+                    rf'name="{http_security.CHAMP_CSRF}" value="([^"]+)"', page.text
+                )
+                jeton = trouve.group(1) if trouve else ""
+                self._jeton_csrf = jeton
+            entetes = dict(entetes)
+            entetes[http_security.ENTETE_CSRF] = jeton
+            kwargs["headers"] = entetes
+        return original(self, method, url, *args, **kwargs)
+
+    monkeypatch.setattr(TestClient, "request", request)
+    yield
+    http_security.limiteur.vider()
 
 
 @pytest.fixture()

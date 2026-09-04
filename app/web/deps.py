@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_session
 from ..models import ProfessionalProfile, User
-from ..services import permission_service
+from ..services import http_security, permission_service
 
 
 def optional_user(request: Request, session: Session = Depends(get_session)) -> User | None:
@@ -18,6 +18,15 @@ def optional_user(request: Request, session: Session = Depends(get_session)) -> 
     user = session.get(User, user_id)
     if user is None or not user.is_active:
         return None
+
+    # Durée de session : inactivité et durée absolue, plus courtes pour un
+    # compte disposant d'un accès administratif (lot 5, point 3).
+    acces_admin = permission_service.has_administrative_access(session, user)
+    motif = http_security.session_expiree(request.session, acces_admin)
+    if motif is not None:
+        request.session.clear()
+        return None
+    http_security.marquer_activite(request.session)
     return user
 
 
@@ -39,7 +48,40 @@ def require_medecin_user(user: User = Depends(current_user)) -> User:
     return user
 
 
+def profile_medecin(
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+) -> ProfessionalProfile:
+    """Profil professionnel **actif** de l'utilisateur courant.
+
+    Lot 5, point 7 du contre-audit : la révocation de ``is_medecin`` doit être
+    appliquée à **tous** les points d'entrée métier, pas seulement à l'écran de
+    connexion. Cette dépendance est le point unique de vérification.
+    """
+    if not user.is_medecin:
+        raise HTTPException(
+            403,
+            "Ce compte n'est plus enregistré comme médecin : les opérations "
+            "métier lui sont fermées.",
+        )
+    profil = profile_of(session, user)
+    if profil is None:
+        raise HTTPException(
+            403, "Aucun profil professionnel actif rattaché à ce compte."
+        )
+    return profil
+
+
 def profile_of(session: Session, user: User) -> ProfessionalProfile | None:
+    """Profil professionnel rattaché à un compte.
+
+    Retourne ``None`` si le compte n'est **plus** enregistré comme médecin :
+    la révocation de ``is_medecin`` prend ainsi effet sur **tous** les points
+    d'entrée métier, sans dépendre d'un contrôle répété route par route
+    (lot 5, point 7 du contre-audit du 04/09/2026).
+    """
+    if not user.is_medecin:
+        return None
     return session.execute(
         select(ProfessionalProfile).where(ProfessionalProfile.user_id == user.id)
     ).scalar_one_or_none()

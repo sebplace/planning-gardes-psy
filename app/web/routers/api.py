@@ -34,6 +34,7 @@ from ...services import (
     audit_service,
     campaign_service,
     handover_service,
+    http_security,
     planning_service,
     projection_service,
     quota_service,
@@ -58,10 +59,42 @@ class LoginIn(BaseModel):
 
 @router.post("/auth/login")
 def login(payload: LoginIn, request: Request, session: Session = Depends(get_session)):
+    adresse = request.client.host if request.client else "?"
+    hors_bornes = http_security.identifiants_hors_bornes(
+        payload.email, payload.password
+    )
+    if hors_bornes is not None:
+        raise HTTPException(400, "Identifiants invalides.")
+    blocage = http_security.limiteur.bloque(payload.email, adresse)
+    if blocage is not None:
+        audit_service.record(
+            session, "AUTHENTIFICATION_LIMITEE", "user", 0,
+            {"motif": blocage, "adresse": adresse, "canal": "api"},
+            actor_label="ANONYME",
+        )
+        session.commit()
+        raise HTTPException(429, "Trop de tentatives. Réessayez plus tard.")
+
+    http_security.limiteur.enregistrer_tentative(adresse)
     user = security.authenticate(session, payload.email, payload.password)
     if user is None:
+        http_security.limiteur.enregistrer_echec(payload.email)
+        audit_service.record(
+            session, "AUTHENTIFICATION_ECHEC", "user", 0,
+            {"adresse": adresse, "canal": "api"}, actor_label="ANONYME",
+        )
+        session.commit()
         raise HTTPException(401, "Identifiants invalides.")
+
+    http_security.limiteur.reinitialiser(payload.email)
+    request.session.clear()
+    http_security.ouvrir_session(request.session)
     request.session["user_id"] = user.id
+    audit_service.record(
+        session, "AUTHENTIFICATION_SUCCES", "user", user.id,
+        {"adresse": adresse, "canal": "api"}, actor=user,
+    )
+    session.commit()
     return {
         "id": user.id,
         "email": user.email,

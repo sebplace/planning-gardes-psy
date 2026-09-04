@@ -35,6 +35,7 @@
 
   {% if wave.state.value == 'OUVERTE' and profile %}
   <form method="post" action="/reprises/{{ demande.id }}/reponse">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
     <input type="hidden" name="wave_id" value="{{ wave.id }}">
     <button type="submit" name="reponse" value="favorable">Je peux prendre cette garde</button>
     <button type="submit" name="reponse" value="refus" class="secondaire">Je ne peux pas</button>
@@ -103,6 +104,7 @@
 
 {% if demande.is_open %}
 <form method="post" action="/reprises/{{ demande.id }}/avancer" class="carte">
+  <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
   <button type="submit" class="secondaire">
     Faire progresser (rappels, clôture de la fenêtre, tirage)
   </button>

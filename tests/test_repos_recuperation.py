@@ -25,6 +25,7 @@ from app.models import (
     Status,
 )
 from app.services import catalog_service, engine_bridge, rest_service
+from app.services.clock import Clock
 from conftest import publish_plan
 
 
@@ -63,11 +64,13 @@ def test_deux_gardes_rapprochees_restent_possibles(world):
 # --------------------------------------------------------------------------- #
 
 
-def _weekend_contigu(world, mode=None):
+def _weekend_contigu(world, mode=None, samedi_requis: bool = False):
     """Deux occurrences contiguës formant plus de 24 h de service continu.
 
     ``mode`` force le mode de couverture des deux occurrences, afin que le poste
     voulu (assistant en première ligne, ou senior) existe réellement.
+    ``samedi_requis`` restreint aux blocs qui commencent effectivement un samedi,
+    seul ancrage accepté pour une demande de week-end complet.
     """
     from app.services import catalog_service
 
@@ -77,6 +80,8 @@ def _weekend_contigu(world, mode=None):
             continue
         duree = (apres.end_at - avant.start_at).total_seconds() / 3600.0
         if duree <= DUREE_CONTINUE_MAX_HEURES:
+            continue
+        if samedi_requis and avant.local_date.weekday() != 5:
             continue
         if mode is not None:
             catalog_service.set_coverage_mode(world.session, avant, mode)
@@ -145,7 +150,7 @@ def test_la_regle_ne_vise_que_les_assistants(session):
 def test_bloc_continu_autorise_apres_demande_datee(world):
     from app.models import CoverageMode
 
-    avant, apres = _weekend_contigu(world, mode=CoverageMode.B)
+    avant, apres = _weekend_contigu(world, mode=CoverageMode.B, samedi_requis=True)
     assistant = world.assistants[0]
     poste_a = next(
         p for p in avant.posts if p.line is Line.L1 and p.required_status is Status.ASSISTANT
@@ -156,8 +161,10 @@ def test_bloc_continu_autorise_apres_demande_datee(world):
     world.set_color(assistant, avant, Color.VERT)
     world.set_color(assistant, apres, Color.VERT)
 
+    # La demande n'est valable que si elle émane de la personne elle-même.
+    demandeur = world.user_of(assistant)
     demande = rest_service.request_weekend_block(
-        world.session, assistant, avant.local_date, world.admin
+        world.session, assistant, avant.local_date, demandeur
     )
     assert demande.requested_at is not None
 
@@ -169,6 +176,32 @@ def test_bloc_continu_autorise_apres_demande_datee(world):
     refus = engine_bridge.check_assignment(world.session, poste_b, assistant)
     assert refus is not None
     assert refus.constraint_code == H_DUREE_CONTINUE
+
+
+def test_seule_la_personne_peut_demander_son_week_end(world):
+    """Lot 5, point 9 : l'opt-in est restreint à son propriétaire."""
+    from app.models import CoverageMode
+
+    avant, _ = _weekend_contigu(world, mode=CoverageMode.B, samedi_requis=True)
+    assistant = world.assistants[0]
+    with pytest.raises(rest_service.RestError) as exc:
+        rest_service.request_weekend_block(
+            world.session, assistant, avant.local_date, world.admin
+        )
+    assert "elle-même" in str(exc.value)
+
+
+def test_la_demande_s_ancre_obligatoirement_un_samedi(world):
+    """Elle couvre exactement les deux occurrences samedi et dimanche."""
+    assistant = world.assistants[0]
+    un_mercredi = next(
+        o.local_date for o in world.occurrences if o.local_date.weekday() == 2
+    )
+    with pytest.raises(rest_service.RestError) as exc:
+        rest_service.request_weekend_block(
+            world.session, assistant, un_mercredi, world.user_of(assistant)
+        )
+    assert "samedi" in str(exc.value)
 
 
 def _affecter(world, post, profile):
@@ -200,10 +233,24 @@ def _affecter(world, post, profile):
 
 
 def _une_affectation(world):
+    """Une affectation **terminée**, détenue par son titulaire.
+
+    Les contrôles de cohérence exigent une garde passée : l'horloge est donc
+    avancée après la fin de la garde retenue.
+    """
     version = publish_plan(world)
-    return world.session.execute(
+    affectation = world.session.execute(
         select(Assignment).where(Assignment.schedule_version_id == version.id).limit(1)
     ).scalar_one()
+    fin = affectation.post.occurrence.end_at
+    Clock.freeze(fin + timedelta(hours=1))
+    return affectation
+
+
+def _titulaire(world, affectation):
+    from app.models import ProfessionalProfile
+
+    return world.session.get(ProfessionalProfile, affectation.profile_id)
 
 
 def test_aucune_presomption_sans_declaration(world):
@@ -214,9 +261,7 @@ def test_aucune_presomption_sans_declaration(world):
 
 def test_simple_appel_sans_deplacement_n_ouvre_aucun_droit(world):
     affectation = _une_affectation(world)
-    profil = world.session.get(
-        type(world.seniors[0]), affectation.profile_id
-    )
+    profil = _titulaire(world, affectation)
     rapport, proposition = rest_service.declare_on_site(
         world.session,
         affectation,
@@ -232,7 +277,7 @@ def test_simple_appel_sans_deplacement_n_ouvre_aucun_droit(world):
 
 def test_heures_fractionnees_n_ouvrent_aucun_droit(world):
     affectation = _une_affectation(world)
-    profil = world.session.get(type(world.seniors[0]), affectation.profile_id)
+    profil = _titulaire(world, affectation)
     _, proposition = rest_service.declare_on_site(
         world.session,
         affectation,
@@ -247,7 +292,7 @@ def test_heures_fractionnees_n_ouvrent_aucun_droit(world):
 
 def test_sous_le_seuil_aucune_proposition(world):
     affectation = _une_affectation(world)
-    profil = world.session.get(type(world.seniors[0]), affectation.profile_id)
+    profil = _titulaire(world, affectation)
     _, proposition = rest_service.declare_on_site(
         world.session,
         affectation,
@@ -261,7 +306,7 @@ def test_sous_le_seuil_aucune_proposition(world):
 
 def test_douze_heures_sur_place_proposent_douze_heures_de_recuperation(world):
     affectation = _une_affectation(world)
-    profil = world.session.get(type(world.seniors[0]), affectation.profile_id)
+    profil = _titulaire(world, affectation)
     _, proposition = rest_service.declare_on_site(
         world.session,
         affectation,
@@ -281,7 +326,7 @@ def test_douze_heures_sur_place_proposent_douze_heures_de_recuperation(world):
 
 def test_la_recuperation_exige_une_decision_humaine(world):
     affectation = _une_affectation(world)
-    profil = world.session.get(type(world.seniors[0]), affectation.profile_id)
+    profil = _titulaire(world, affectation)
     _, proposition = rest_service.declare_on_site(
         world.session, affectation, profil, 13.0, True, declared_by=world.admin
     )
@@ -300,9 +345,9 @@ def test_la_recuperation_exige_une_decision_humaine(world):
 
 def test_refus_de_recuperation_trace(world):
     affectation = _une_affectation(world)
-    profil = world.session.get(type(world.seniors[0]), affectation.profile_id)
+    profil = _titulaire(world, affectation)
     _, proposition = rest_service.declare_on_site(
-        world.session, affectation, profil, 20.0, True, declared_by=world.admin
+        world.session, affectation, profil, 14.0, True, declared_by=world.admin
     )
     rest_service.decide_recovery(
         world.session,

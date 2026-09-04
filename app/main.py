@@ -17,6 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .config import settings
 from .db import create_all
 from .services import environment as envsvc
+from .services import http_security
 from .web.routers import api, ui
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -43,6 +44,42 @@ def create_app() -> FastAPI:
         redoc_url="/api/redoc" if demo else None,
         openapi_url="/api/openapi.json" if demo else None,
     )
+    # Ordre des couches, du plus interne au plus externe :
+    #   1. contrôle CSRF        (doit voir la session)
+    #   2. SessionMiddleware    (fournit request.session)
+    #   3. transport et en-têtes (doit voir la requête brute)
+    # Starlette place en dernier la couche ajoutée en dernier : l'ordre
+    # d'écriture ci-dessous est donc inverse de l'ordre d'exécution.
+
+    @app.middleware("http")
+    async def _csrf(request: Request, call_next):
+        """Jeton anti-rejeu sur toute écriture d'interface (lot 5, point 6).
+
+        L'API JSON en est exemptée : elle n'est pas soumise à une navigation
+        ambiante et reste protégée par ``SameSite=Lax`` et l'absence de
+        formulaire HTML.
+        """
+        chemin = request.url.path
+        if (
+            request.method in ("POST", "PUT", "PATCH", "DELETE")
+            and not chemin.startswith("/api/")
+            and not chemin.startswith("/health/")
+        ):
+            fourni = request.headers.get(http_security.ENTETE_CSRF)
+            if fourni is None:
+                try:
+                    formulaire = await request.form()
+                    fourni = formulaire.get(http_security.CHAMP_CSRF)
+                except Exception:  # pragma: no cover - corps illisible
+                    fourni = None
+            if not http_security.csrf_valide(request.session, fourni):
+                return HTMLResponse(
+                    "<p>Requête refusée : jeton anti-rejeu absent ou invalide.</p>"
+                    "<p>Rechargez la page puis recommencez.</p>",
+                    status_code=403,
+                )
+        return await call_next(request)
+
     # Cookie de session Secure dès qu'on est derrière un proxy TLS (staging/prod).
     app.add_middleware(
         SessionMiddleware,
@@ -52,17 +89,27 @@ def create_app() -> FastAPI:
     )
 
     # Transport : redirection HTTP -> HTTPS (via X-Forwarded-Proto derrière Scalingo)
-    # et en-têtes de sécurité. Défini après SessionMiddleware pour être le plus externe.
+    # et en-têtes de sécurité. Couche la plus externe.
     @app.middleware("http")
     async def _transport_security(request: Request, call_next):
         proto = request.headers.get("x-forwarded-proto")
         if deployed and proto == "http":
             https_url = request.url.replace(scheme="https")
             return RedirectResponse(str(https_url), status_code=308)
+
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
+            "form-action 'self'; object-src 'none'",
+        )
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+        )
         if deployed or proto == "https":
             response.headers.setdefault(
                 "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
