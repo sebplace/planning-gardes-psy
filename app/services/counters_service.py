@@ -19,6 +19,8 @@ from datetime import date
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..engine.cycle import cycle_pour
+
 from ..models import (
     Assignment,
     CoveragePost,
@@ -123,6 +125,14 @@ def poids_a_la_date(
 
 
 def _gardes_publiees(session: Session, profile: ProfessionalProfile, year: Year):
+    """Gardes publiées de la personne sur le **cycle** de quota de l'année.
+
+    Lot C, point 4 du contre-audit du 04/09/2026 : ce n'est plus l'année civile
+    des trimestres qui délimite les compteurs, mais le cycle canonique du
+    premier lundi d'octobre inclus au premier lundi d'octobre suivant exclu. Le
+    rattachement suit la **date de service**.
+    """
+    cycle = cycle_pour(year.start_date)
     return session.execute(
         select(CoveragePost, GardeOccurrence, GardeType, QuotaCategory)
         .select_from(Assignment)
@@ -135,7 +145,8 @@ def _gardes_publiees(session: Session, profile: ProfessionalProfile, year: Year)
         .where(
             Assignment.profile_id == profile.id,
             ScheduleVersion.state == ScheduleState.PUBLIE,
-            Quarter.year_id == year.id,
+            GardeOccurrence.local_date >= cycle.debut,
+            GardeOccurrence.local_date <= cycle.fin,
         )
     ).all()
 

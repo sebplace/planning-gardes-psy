@@ -334,7 +334,16 @@ class ContinuousDutyRuleIn:
         return person.status in self.applies_to_statuses
 
     def has_request(self, profile_id: int, days: set[date]) -> bool:
-        return any((profile_id, day) in self.explicit_requests for day in days)
+        """Vrai seulement si **toute** la chaîne est couverte par la dérogation.
+
+        Lot C, point 6 du contre-audit du 04/09/2026 : avec un simple ``any``,
+        une demande de week-end couvrant samedi et dimanche autorisait aussi une
+        chaîne débordant sur le lundi. Une demande partielle ne doit jamais
+        ouvrir une chaîne plus longue que ce qui a été explicitement demandé.
+        """
+        if not days:
+            return False
+        return all((profile_id, day) in self.explicit_requests for day in days)
 
 
 @dataclass(frozen=True)

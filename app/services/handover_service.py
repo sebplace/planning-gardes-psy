@@ -21,7 +21,7 @@ import hashlib
 import hmac
 import json
 import secrets
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -327,6 +327,7 @@ def bucket_solde(
 
     # Plafonds transversaux : mensuel et de période.
     plafonds: list[str] = []
+    charge_mois = charge_du_mois(session, profile, occurrence.local_date)
     for cap in quota_service.monthly_caps(session, year):
         if not cap.is_enforceable:
             continue
@@ -335,8 +336,13 @@ def bucket_solde(
             if cap.profile_id is not None
             else cap.status is profile.status
         )
-        if vise:
-            plafonds.append(cap.label)
+        # Lot C, point 2 : on compare la charge **réelle** du mois augmentée du
+        # poids de la garde, au lieu de signaler l'existence du plafond.
+        if vise and charge_mois + poids > cap.max_per_month + 1e-9:
+            plafonds.append(
+                f"{cap.label} ({charge_mois:g} + {poids:g} > {cap.max_per_month:g} "
+                f"sur {occurrence.local_date.strftime('%m/%Y')})"
+            )
     for suivi in period_quota_service.suivi(session, profile):
         if suivi.opposable and suivi.debut <= occurrence.local_date <= suivi.fin:
             if suivi.total + poids > (suivi.maximum or 0) + 1e-9:
@@ -348,6 +354,7 @@ def bucket_solde(
         "poids": poids,
         "cible": round(cible, 3),
         "total_actuel": round(total, 3),
+        "charge_du_mois": round(charge_mois, 3),
         "maximum_ferme": maximum if maximum_ferme else None,
         "sous_la_cible": sous_la_cible,
         "sous_le_maximum": sous_le_maximum,
@@ -356,6 +363,33 @@ def bucket_solde(
             sous_la_cible and sous_le_maximum and not plafonds
         ),
     }
+
+
+def charge_du_mois(
+    session: Session, profile: ProfessionalProfile, jour: date
+) -> float:
+    """Poids total des gardes publiées de la personne sur le **mois civil** de ``jour``.
+
+    Lot C, point 2 du contre-audit : le plafond mensuel n'était pas comparé à une
+    charge réelle. Le rattachement suit la date de service, comme partout
+    ailleurs.
+    """
+    debut = jour.replace(day=1)
+    fin = (debut + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    rows = session.execute(
+        select(GardeType.count_weight)
+        .join(GardeOccurrence, GardeOccurrence.garde_type_id == GardeType.id)
+        .join(CoveragePost, CoveragePost.occurrence_id == GardeOccurrence.id)
+        .join(Assignment, Assignment.post_id == CoveragePost.id)
+        .join(ScheduleVersion, Assignment.schedule_version_id == ScheduleVersion.id)
+        .where(
+            Assignment.profile_id == profile.id,
+            ScheduleVersion.state == ScheduleState.PUBLIE,
+            GardeOccurrence.local_date >= debut,
+            GardeOccurrence.local_date <= fin,
+        )
+    ).scalars()
+    return float(sum(rows))
 
 
 def reprise_simple_possible(
@@ -877,18 +911,26 @@ def _apply_attribution(
 # --------------------------------------------------------------------------- #
 
 
-def escalate(session: Session, request: HandoverRequest, reasons: list[str]) -> None:
+def escalate(
+    session: Session,
+    request: HandoverRequest,
+    reasons: list[str],
+    echange_ouvert=None,
+) -> None:
     request.state = HandoverState.ESCALADE
     request.escalated_at = Clock.now()
     request.closed_at = Clock.now()
     for wave in request.waves:
         if wave.state is WaveState.OUVERTE:
             wave.state = WaveState.SANS_CANDIDATURE
-    session.execute(
-        update(Assignment)
-        .where(Assignment.id == request.assignment_id)
-        .values(busy_operation=None)
-    )
+    if echange_ouvert is None:
+        # Le verrou n'est relâché que si la garde n'est pas repartie dans une
+        # recherche d'échange : sinon on écraserait ce verrou-là.
+        session.execute(
+            update(Assignment)
+            .where(Assignment.id == request.assignment_id)
+            .values(busy_operation=None)
+        )
     session.flush()
     context = _context(session, request)
     notification_service.enqueue(
@@ -902,6 +944,7 @@ def escalate(session: Session, request: HandoverRequest, reasons: list[str]) -> 
     audit_service.record(
         session, "REPRISE_ESCALADE", "handover_request", request.id,
         {"raisons": reasons,
+         "echange_ouvert": echange_ouvert.id if echange_ouvert is not None else None,
          "note": "affectation initiale maintenue ; aucune personne rouge n'a été sollicitée"},
         actor_label="SYSTEME",
     )
@@ -949,15 +992,85 @@ def advance(
         if draw is not None:
             return request
         # Plus de vague orange successive : la collecte est unique (03/09/2026).
-        # Sans volontaire valide, le titulaire publié reste responsable et les
-        # responsables sont alertés.
+        # Lot C, point 1 du contre-audit du 04/09/2026 : quand aucun volontaire
+        # ne peut absorber la garde sans surcharge, on ne se contente plus
+        # d'exclure puis d'escalader. On lance **réellement** la recherche d'un
+        # échange équivalent. Sans échange non plus, le titulaire reste inchangé
+        # et les responsables sont alertés.
         motif = (
             "Aucun volontaire vert valide en première ligne."
             if wave.kind is WaveKind.VERTE
             else "Aucun volontaire valide, ni vert ni orange, en deuxième ligne."
         )
-        escalate(session, request, [motif])
+        bascule = basculer_vers_un_echange(session, request)
+        if bascule is not None:
+            escalate(
+                session,
+                request,
+                [
+                    motif,
+                    "Une recherche d'échange équivalent a été ouverte "
+                    f"(recherche {bascule.id}) : {bascule.solicited_count} "
+                    "partenaire(s) sollicité(s).",
+                ],
+                echange_ouvert=bascule,
+            )
+            return request
+        escalate(session, request, [motif, MOTIF_SANS_ECHANGE])
     return request
+
+
+#: Alerte explicite lorsque ni reprise simple ni échange équivalent n'aboutit.
+MOTIF_SANS_ECHANGE = (
+    "Aucun échange équivalent praticable non plus : le titulaire publié reste "
+    "responsable de la garde et les responsables sont alertés."
+)
+
+
+def basculer_vers_un_echange(session: Session, request: HandoverRequest):
+    """Ouvre une recherche d'échange à partir de la garde de la demande.
+
+    Appelée quand la reprise simple n'aboutit pas : soit personne n'est
+    disponible, soit les volontaires ne pourraient absorber la garde qu'en se
+    surchargeant. Retourne la recherche ouverte, ou ``None`` si aucun échange
+    n'est praticable.
+
+    Le verrou d'opération est relâché juste avant, dans la **même** transaction :
+    la garde passe de « reprise » à « échange » sans fenêtre ouverte.
+    """
+    from . import swap_flow_service, swap_search_service
+
+    assignment = request.assignment
+    titulaire = session.get(ProfessionalProfile, assignment.profile_id)
+    session.execute(
+        update(Assignment)
+        .where(Assignment.id == assignment.id)
+        .values(busy_operation=None)
+    )
+    session.expire(assignment)
+    try:
+        recherche = swap_flow_service.ouvrir(session, assignment, titulaire)
+    except (swap_flow_service.SwapFlowError, swap_search_service.SwapSearchError):
+        return None
+    session.flush()
+    if recherche.state is not swap_flow_service.SwapSearchState.COLLECTE:
+        return None
+    audit_service.record(
+        session,
+        "REPRISE_BASCULEE_EN_ECHANGE",
+        "handover_request",
+        request.id,
+        {
+            "recherche": recherche.id,
+            "sollicites": recherche.solicited_count,
+            "note": (
+                "aucune reprise simple possible sans surcharge ; recherche d'un "
+                "échange équivalent réellement lancée"
+            ),
+        },
+        actor_label="SYSTEME",
+    )
+    return recherche
 
 
 def line_of(request: HandoverRequest) -> str:

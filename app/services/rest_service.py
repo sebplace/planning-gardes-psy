@@ -45,6 +45,54 @@ class RestError(Exception):
 
 #: Jour d'ancrage d'une demande de week-end complet.
 SAMEDI = 5
+#: Heure de relève d'un week-end : samedi 9 h → dimanche 9 h → lundi 9 h.
+HEURE_DE_RELEVE = 9
+
+
+def _assert_week_end_de_neuf_a_neuf(session: Session, anchor_date: date) -> None:
+    """Vérifie que les **deux** occurrences attendues existent, et elles seules.
+
+    Lot C, point 6 : une demande ne doit couvrir que le samedi 9 h → dimanche
+    9 h et le dimanche 9 h → lundi 9 h. Le contrôle porte sur le **type** de
+    garde, qui porte ces horaires dans le catalogue, et sur la contiguïté réelle
+    des deux occurrences. Comparer des heures brutes serait fragile, puisque les
+    bornes sont stockées en temps universel alors que les horaires métier sont
+    exprimés en heure locale.
+    """
+    dimanche = anchor_date + timedelta(days=1)
+    attendus = {anchor_date: "SAMEDI", dimanche: "DIMANCHE"}
+    occurrences: dict[date, GardeOccurrence] = {}
+    for jour, code_attendu in attendus.items():
+        occurrence = session.execute(
+            select(GardeOccurrence).where(GardeOccurrence.local_date == jour)
+        ).scalars().first()
+        if occurrence is None:
+            raise RestError(
+                f"Aucune garde n'est prévue le {jour.isoformat()} : la demande de "
+                "week-end complet ne peut couvrir que le samedi et le dimanche "
+                "réellement planifiés."
+            )
+        if occurrence.garde_type.code != code_attendu:
+            raise RestError(
+                f"La garde du {jour.isoformat()} est de type "
+                f"« {occurrence.garde_type.code} » et non « {code_attendu} ». "
+                "Une demande de week-end complet ne couvre que les deux "
+                "occurrences de 9 h à 9 h."
+            )
+        occurrences[jour] = occurrence
+
+    samedi, dimanche_occ = occurrences[anchor_date], occurrences[dimanche]
+    if samedi.end_at != dimanche_occ.start_at:
+        raise RestError(
+            "Les deux occurrences du week-end ne sont pas contiguës : la demande "
+            "ne peut pas couvrir un bloc discontinu."
+        )
+    heures = (dimanche_occ.end_at - samedi.start_at).total_seconds() / 3600.0
+    if abs(heures - 48.0) > 1e-6:
+        raise RestError(
+            f"Le bloc demandé dure {heures:g} h au lieu des 48 h du week-end "
+            "complet : une demande partielle n'ouvre jamais une chaîne plus longue."
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -64,15 +112,23 @@ def request_weekend_block(
     L'application ne crée jamais cette demande d'elle-même : sans elle, tout bloc
     de service continu dépassant le maximum est refusé par la contrainte ferme.
 
-    Deux restrictions ajoutées après le contre-audit du 04/09/2026 (lot 5,
-    point 9) :
+    Trois restrictions, dont deux ajoutées après le contre-audit du 04/09/2026
+    (lot 5 point 9, puis lot C point 6) :
 
+    * l'auteur doit être **explicite** : une demande sans auteur est refusée,
+      car elle ne prouve rien ;
     * seule la personne concernée peut formuler la demande ; un administrateur
       ne peut pas la déposer à sa place ;
-    * la date d'ancrage doit être un **samedi**, la demande couvrant alors
-      exactement les deux occurrences du samedi et du dimanche.
+    * la date d'ancrage doit être un **samedi**, et les deux occurrences du
+      samedi 9 h → dimanche 9 h et du dimanche 9 h → lundi 9 h doivent
+      réellement exister. La demande ne couvre alors qu'elles deux.
     """
-    if requested_by is not None and requested_by.id != profile.user_id:
+    if requested_by is None:
+        raise RestError(
+            "Une demande de bloc continu doit avoir un auteur identifié : "
+            "sans auteur, elle ne prouve rien."
+        )
+    if requested_by.id != profile.user_id:
         raise RestError(
             "Une demande de bloc continu n'est valable que si elle est formulée "
             "par la personne concernée elle-même."
@@ -82,6 +138,7 @@ def request_weekend_block(
             "La demande de week-end complet s'ancre sur un samedi ; elle couvre "
             "alors exactement le samedi et le dimanche."
         )
+    _assert_week_end_de_neuf_a_neuf(session, anchor_date)
 
     existing = session.execute(
         select(WeekendBlockRequest).where(

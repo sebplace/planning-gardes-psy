@@ -316,7 +316,63 @@ def monthly_cap_alerts(session: Session, year: Year) -> list[str]:
                 f"Aucun plafond mensuel enregistré pour le statut {status.value}. "
                 "Valeur institutionnelle attendue avant tout planning officiel."
             )
+    alertes.append(OBJECTIF_MENSUEL_ASSISTANT.alerte)
     return alertes
+
+
+# --------------------------------------------------------------------------- #
+# Objectif mensuel de répartition des assistants — paramètre inactif
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class ObjectifMensuelAssistant:
+    """Répartition mensuelle souhaitée pour un assistant.
+
+    Lot C, point 7 du contre-audit du 04/09/2026 : le caractère opposable de
+    « un vendredi + deux jours de week-end par mois » n'a **pas** été tranché
+    institutionnellement. Le paramètre existe donc, il est lisible et
+    modifiable, mais il est **inactif** : ni le moteur ni les reprises ni les
+    échanges ne le consultent. Le rendre opposable est une décision humaine.
+    """
+
+    vendredis_par_mois: float = 1.0
+    jours_de_week_end_par_mois: float = 2.0
+    #: Jamais vrai tant qu'aucune décision institutionnelle n'est enregistrée.
+    actif: bool = False
+    label: str = "objectif mensuel de répartition des assistants"
+
+    @property
+    def opposable(self) -> bool:
+        """Toujours faux : un objectif inactif ne bloque jamais une affectation."""
+        return False
+
+    @property
+    def alerte(self) -> str:
+        return (
+            f"{self.label} : hypothèse de simulation "
+            f"({self.vendredis_par_mois:g} vendredi et "
+            f"{self.jours_de_week_end_par_mois:g} jours de week-end par mois), "
+            "inactive tant qu'aucune décision institutionnelle explicite n'est "
+            "enregistrée. Décision humaine attendue."
+        )
+
+    def as_dict(self) -> dict:
+        return {
+            "libelle": self.label,
+            "vendredis_par_mois": self.vendredis_par_mois,
+            "jours_de_week_end_par_mois": self.jours_de_week_end_par_mois,
+            "actif": self.actif,
+            "opposable": self.opposable,
+            "note": (
+                "paramètre configurable et inactif ; aucune règle ferme n'en "
+                "dérive tant que le client n'a pas tranché"
+            ),
+        }
+
+
+#: Valeur de démonstration, explicitement inactive.
+OBJECTIF_MENSUEL_ASSISTANT = ObjectifMensuelAssistant()
 
 
 def apply_handover_adjustment(

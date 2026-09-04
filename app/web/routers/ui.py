@@ -34,6 +34,7 @@ from ...models import (
     ProfessionalProfile,
     Proposal,
     Quarter,
+    RecoveryProposal,
     Scenario,
     ScenarioResult,
     ScheduleState,
@@ -46,6 +47,7 @@ from ...models import (
     User,
     WaveSolicitation,
     WaveState,
+    WeekendBlockRequest,
     Year,
 )
 from ...models import permissions
@@ -59,6 +61,7 @@ from ...services import (
     planning_service,
     projection_service,
     quota_service,
+    rest_service,
     security,
     swap_flow_service,
     swap_search_service,
@@ -1127,13 +1130,170 @@ def accept_swap_ui(
 
 
 # --------------------------------------------------------------------------- #
+# Repos, présence sur place et récupération
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/repos", response_class=HTMLResponse)
+def repos(
+    request: Request,
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+):
+    """Déclarer une présence sur place, suivre ses récupérations, demander un
+    week-end complet. Lot C, point 5 : ces opérations existaient dans le service
+    mais n'avaient aucune porte d'entrée protégée."""
+    _require(user)
+    profile = profile_of(session, user)
+    gardes_passees = []
+    mes_recuperations = []
+    mes_demandes = []
+    if profile is not None:
+        gardes_passees = session.execute(
+            select(Assignment, CoveragePost, GardeOccurrence)
+            .join(CoveragePost, Assignment.post_id == CoveragePost.id)
+            .join(GardeOccurrence, CoveragePost.occurrence_id == GardeOccurrence.id)
+            .join(ScheduleVersion, Assignment.schedule_version_id == ScheduleVersion.id)
+            .where(
+                Assignment.profile_id == profile.id,
+                ScheduleVersion.state == ScheduleState.PUBLIE,
+                GardeOccurrence.end_at <= Clock.now(),
+            )
+            .order_by(GardeOccurrence.start_at.desc())
+        ).all()
+        mes_recuperations = list(
+            session.execute(
+                select(RecoveryProposal)
+                .where(RecoveryProposal.profile_id == profile.id)
+                .order_by(RecoveryProposal.id.desc())
+            ).scalars()
+        )
+        mes_demandes = list(
+            session.execute(
+                select(WeekendBlockRequest)
+                .where(WeekendBlockRequest.profile_id == profile.id)
+                .order_by(WeekendBlockRequest.anchor_date.desc())
+            ).scalars()
+        )
+    peut_trancher = permission_service.may(
+        session, user, permissions.ACTION_OPERATIONNEL
+    )
+    a_trancher = rest_service.pending_recoveries(session) if peut_trancher else []
+    return render(request, "repos.html", user, "repos",
+                  profile=profile, gardes_passees=gardes_passees,
+                  mes_recuperations=mes_recuperations, mes_demandes=mes_demandes,
+                  a_trancher=a_trancher, peut_trancher=peut_trancher,
+                  objectif=quota_service.OBJECTIF_MENSUEL_ASSISTANT)
+
+
+@router.post("/repos/declarer", response_class=HTMLResponse)
+def declarer_presence(
+    request: Request,
+    assignment_id: int = Form(...),
+    heures: float = Form(...),
+    deplacement: str = Form(""),
+    commentaire: str = Form(""),
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+):
+    _require(user)
+    profile = profil_medecin_de(session, user)
+    assignment = session.get(Assignment, assignment_id)
+    if assignment is None:
+        raise visibility_service.RessourceInvisible()
+    try:
+        _, proposition = rest_service.declare_on_site(
+            session, assignment, profile,
+            hours_on_site=heures,
+            moved_on_site=(deplacement == "oui"),
+            declared_by=user,
+            comment=commentaire,
+        )
+        session.commit()
+        if proposition is not None:
+            flash(request, "succes",
+                  "Déclaration enregistrée. Une récupération est proposée : elle "
+                  "ne s'applique qu'après décision humaine explicite.")
+        else:
+            flash(request, "info",
+                  "Déclaration enregistrée. Aucune récupération n'est ouverte : "
+                  "un appel sans déplacement n'ouvre aucun droit.")
+    except rest_service.RestError as exc:
+        session.rollback()
+        flash(request, "erreur", str(exc))
+    return RedirectResponse("/repos", status_code=303)
+
+
+@router.post("/repos/recuperation/{proposal_id}", response_class=HTMLResponse)
+def trancher_recuperation(
+    proposal_id: int,
+    request: Request,
+    decision: str = Form(...),
+    commentaire: str = Form(""),
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+):
+    """Décision humaine explicite. Une récupération validée devient un
+    intervalle occupé pour la génération, la reprise et l'échange."""
+    _require(user)
+    if not permission_service.may(session, user, permissions.ACTION_OPERATIONNEL):
+        raise HTTPException(
+            403, permission_service.refus(permissions.ACTION_OPERATIONNEL)
+        )
+    proposition = session.get(RecoveryProposal, proposal_id)
+    if proposition is None:
+        raise visibility_service.RessourceInvisible()
+    try:
+        rest_service.decide_recovery(
+            session, proposition, accepted=(decision == "valider"),
+            decided_by=user, comment=commentaire or None,
+        )
+        session.commit()
+        flash(request, "succes", "Décision enregistrée et journalisée.")
+    except rest_service.RestError as exc:
+        session.rollback()
+        flash(request, "erreur", str(exc))
+    return RedirectResponse("/repos", status_code=303)
+
+
+@router.post("/repos/weekend", response_class=HTMLResponse)
+def demander_weekend(
+    request: Request,
+    date_ancrage: str = Form(...),
+    commentaire: str = Form(""),
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+):
+    """Opt-in week-end complet, réservé à son propriétaire et ancré sur un samedi."""
+    _require(user)
+    profile = profil_medecin_de(session, user)
+    try:
+        ancrage = date.fromisoformat(date_ancrage)
+    except ValueError:
+        flash(request, "erreur", "Date d'ancrage illisible.")
+        return RedirectResponse("/repos", status_code=303)
+    try:
+        rest_service.request_weekend_block(
+            session, profile, ancrage, requested_by=user,
+            comment=commentaire or None,
+        )
+        session.commit()
+        flash(request, "succes",
+              "Demande enregistrée. Elle couvre exactement le samedi et le "
+              "dimanche, jamais un bloc plus long.")
+    except rest_service.RestError as exc:
+        session.rollback()
+        flash(request, "erreur", str(exc))
+    return RedirectResponse("/repos", status_code=303)
+
+
+# --------------------------------------------------------------------------- #
 # Notifications, audit, projections
 # --------------------------------------------------------------------------- #
 
 
 @router.get("/notifications", response_class=HTMLResponse)
-def notifications(
-    request: Request,
+def notifications(    request: Request,
     user: User | None = Depends(optional_user),
     session: Session = Depends(get_session),
 ):

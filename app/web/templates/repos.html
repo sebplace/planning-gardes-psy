@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block titre %}Repos et récupération{% endblock %}
+{% block contenu %}
+<h1>Repos, présence sur place et récupération</h1>
+
+<div class="carte">
+  <h2>Ce que fait l'application, et ce qu'elle ne fait pas</h2>
+  <ul>
+    <li>Aucune nuit n'est présumée travaillée du seul fait d'avoir été de garde.</li>
+    <li>Un appel traité à distance, sans déplacement, n'ouvre <strong>aucun</strong> droit.</li>
+    <li>Au-delà de 12 h continues réellement passées sur place, une récupération de
+        12 h est <strong>proposée</strong>. Elle ne s'applique qu'après décision humaine.</li>
+    <li>Une récupération <strong>validée</strong> devient un intervalle occupé : elle
+        contraint la génération, la correction manuelle, les reprises et les échanges.
+        Une proposition non tranchée n'a aucun effet.</li>
+    <li>Une concentration inhabituelle produit une alerte, jamais une règle ferme.</li>
+  </ul>
+  <p class="hypothese">{{ objectif.alerte }}</p>
+</div>
+
+{% if gardes_passees %}
+<div class="carte">
+  <h2>Déclarer une présence sur place</h2>
+  <form method="post" action="/repos/declarer">
+    <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+    <p>
+      <label for="assignment_id">Garde terminée</label>
+      <select id="assignment_id" name="assignment_id" required>
+        {% for assignment, post, occurrence in gardes_passees %}
+        <option value="{{ assignment.id }}">
+          {{ occurrence.local_date }} — {{ occurrence.garde_type.label }} — {{ post.line.value }}
+        </option>
+        {% endfor %}
+      </select>
+    </p>
+    <p>
+      <label for="heures">Heures réellement passées sur place</label>
+      <input type="number" id="heures" name="heures" min="0" max="48" step="0.5" required>
+    </p>
+    <p>
+      <label for="deplacement">Déplacement effectif sur site</label>
+      <select id="deplacement" name="deplacement">
+        <option value="oui">Oui, je me suis déplacé·e</option>
+        <option value="non">Non, appel traité à distance</option>
+      </select>
+    </p>
+    <p>
+      <label for="commentaire">Commentaire (facultatif)</label>
+      <input type="text" id="commentaire" name="commentaire" maxlength="300" size="50">
+      <span class="aide">Ne pas encoder d'information concernant un patient.</span>
+    </p>
+    <button type="submit">Enregistrer ma déclaration</button>
+  </form>
+</div>
+{% endif %}
+
+{% if profile %}
+<div class="carte">
+  <h2>Demander un week-end complet</h2>
+  <p class="aide">
+    Réservé à la personne concernée, ancré sur un <strong>samedi</strong>, et
+    couvrant exactement les deux occurrences du samedi 9 h au dimanche 9 h puis du
+    dimanche 9 h au lundi 9 h. Une demande partielle n'ouvre jamais un bloc plus long.
+  </p>
+  <form method="post" action="/repos/weekend">
+    <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+    <p>
+      <label for="date_ancrage">Samedi concerné</label>
+      <input type="date" id="date_ancrage" name="date_ancrage" required>
+    </p>
+    <p>
+      <label for="commentaire_we">Commentaire (facultatif)</label>
+      <input type="text" id="commentaire_we" name="commentaire" maxlength="300" size="50">
+    </p>
+    <button type="submit">Demander ce week-end complet</button>
+  </form>
+  {% if mes_demandes %}
+  <ul>
+    {% for demande in mes_demandes %}
+    <li>
+      {{ demande.anchor_date }} —
+      <span class="etiquette {{ 'vert' if demande.active else 'neutre' }}">
+        {{ 'active' if demande.active else 'retirée' }}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if mes_recuperations %}
+<div class="carte">
+  <h2>Mes récupérations</h2>
+  <div class="tableau-defilant">
+    <table>
+      <thead>
+        <tr><th scope="col">#</th><th scope="col">Début</th><th scope="col">Fin</th>
+            <th scope="col">Heures</th><th scope="col">État</th></tr>
+      </thead>
+      <tbody>
+        {% for recuperation in mes_recuperations %}
+        <tr>
+          <td>{{ recuperation.id }}</td>
+          <td>{{ format_local(recuperation.starts_at) }}</td>
+          <td>{{ format_local(recuperation.ends_at) }}</td>
+          <td>{{ recuperation.hours }}</td>
+          <td>
+            <span class="etiquette {{ 'vert' if recuperation.state == 'VALIDEE'
+                                      else 'rouge' if recuperation.state == 'REFUSEE'
+                                      else 'neutre' }}">
+              {{ recuperation.state }}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if peut_trancher %}
+<div class="carte">
+  <h2>Récupérations à trancher</h2>
+  {% if a_trancher %}
+  <ul>
+    {% for recuperation in a_trancher %}
+    <li>
+      <strong>{{ recuperation.profile.code }}</strong> —
+      {{ format_local(recuperation.starts_at) }} → {{ format_local(recuperation.ends_at) }}
+      ({{ recuperation.hours }} h)
+      <form method="post" action="/repos/recuperation/{{ recuperation.id }}">
+        <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+        <input type="text" name="commentaire" maxlength="300" size="40"
+               placeholder="Motif de la décision (facultatif)">
+        <button type="submit" name="decision" value="valider">Valider</button>
+        <button type="submit" name="decision" value="refuser" class="secondaire">Refuser</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="vide">Aucune récupération en attente.</p>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

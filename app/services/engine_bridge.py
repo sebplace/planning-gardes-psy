@@ -37,6 +37,7 @@ from ..engine import (
     hard_violation,
 )
 from ..engine.context import Context
+from ..engine.cycle import cycle_pour
 from ..models import (
     Assignment,
     Availability,
@@ -60,6 +61,7 @@ from ..models import (
     ScheduleVersion,
     Submission,
     WeekendBlockRequest,
+    Year,
 )
 
 RULESET_VERSION = "regles_demo_v1"
@@ -314,9 +316,28 @@ def exemptions(session: Session) -> list[ExemptionIn]:
     return out
 
 
-def prior_load(session: Session, year_id: int, exclude_quarter_id: int | None) -> dict:
-    """Charge annuelle déjà réalisée ou programmée hors du trimestre généré,
-    ajustements de reprise inclus."""
+def cycle_bounds(quarter: Quarter) -> tuple[date, date]:
+    """Bornes de **dates de service** du cycle de quota auquel appartient le trimestre.
+
+    Lot C, point 4 du contre-audit du 04/09/2026 : ce n'est plus l'année civile
+    du trimestre qui commande les charges antérieures et l'avancement, mais le
+    cycle canonique du premier lundi d'octobre inclus au premier lundi d'octobre
+    suivant exclu. Un trimestre de septembre et un trimestre d'octobre
+    n'appartiennent donc pas au même cycle, et le 31 décembre ne coupe rien.
+    """
+    cycle = cycle_pour(quarter.start_date)
+    return cycle.debut, cycle.fin
+
+
+def prior_load(
+    session: Session, quarter: Quarter, exclude_quarter_id: int | None
+) -> dict:
+    """Charge du **cycle** déjà réalisée ou programmée hors du trimestre généré.
+
+    Les ajustements de reprise sont repris pour toutes les années civiles que le
+    cycle recoupe : un cycle est à cheval sur deux d'entre elles.
+    """
+    debut, fin = cycle_bounds(quarter)
     load: dict[tuple[int, str, str], float] = defaultdict(float)
     rows = session.execute(
         select(Assignment, CoveragePost, GardeOccurrence, GardeType, QuotaCategory, Quarter)
@@ -328,17 +349,23 @@ def prior_load(session: Session, year_id: int, exclude_quarter_id: int | None) -
         .join(ScheduleVersion, Assignment.schedule_version_id == ScheduleVersion.id)
         .where(
             ScheduleVersion.state == ScheduleState.PUBLIE,
-            Quarter.year_id == year_id,
+            GardeOccurrence.local_date >= debut,
+            GardeOccurrence.local_date <= fin,
         )
     ).all()
-    for assignment, post, _occ, garde_type, category, quarter in rows:
-        if exclude_quarter_id is not None and quarter.id == exclude_quarter_id:
+    for assignment, post, _occ, garde_type, category, quarter_row in rows:
+        if exclude_quarter_id is not None and quarter_row.id == exclude_quarter_id:
             continue
         load[(assignment.profile_id, category.code, post.line.value)] += garde_type.count_weight
 
     categories = {c.id: c.code for c in session.execute(select(QuotaCategory)).scalars()}
+    annees = list(
+        session.execute(
+            select(Year.id).where(Year.start_date <= fin, Year.end_date >= debut)
+        ).scalars()
+    ) or [quarter.year_id]
     for adj in session.execute(
-        select(QuotaAdjustment).where(QuotaAdjustment.year_id == year_id)
+        select(QuotaAdjustment).where(QuotaAdjustment.year_id.in_(annees))
     ).scalars():
         load[(adj.profile_id, categories[adj.category_id], adj.line.value)] += adj.delta
     return dict(load)
@@ -375,6 +402,18 @@ def busy_intervals(
     # Récupérations **validées** : elles occupent réellement la personne et
     # doivent donc contraindre le moteur (lot 5, point 8 du contre-audit du
     # 04/09/2026). Une proposition non tranchée n'a aucun effet.
+    out.extend(recovery_intervals(session))
+    return out
+
+
+def recovery_intervals(session: Session) -> list[BusyIntervalIn]:
+    """Récupérations **validées**, converties en intervalles occupés.
+
+    Extraites ici pour être partagées par la génération et par le contrôle
+    d'une affectation unique (reprise, échange, correction manuelle). Une
+    proposition ``PROPOSEE`` ou ``REFUSEE`` n'a aucun effet.
+    """
+    out: list[BusyIntervalIn] = []
     for recuperation in session.execute(
         select(RecoveryProposal).where(RecoveryProposal.state == "VALIDEE")
     ).scalars():
@@ -393,9 +432,15 @@ def busy_intervals(
 
 
 def year_fraction(quarter: Quarter) -> float:
-    year = quarter.year
-    total = (year.end_date - year.start_date).days + 1
-    elapsed = (quarter.end_date - year.start_date).days + 1
+    """Fraction du **cycle de quota** écoulée à la fin du trimestre.
+
+    Lot C, point 4 : l'avancement se mesure sur le cycle canonique, pas sur
+    l'année civile. Un trimestre d'octobre ouvre donc le cycle au lieu de le
+    clore, et le 31 décembre ne remet aucun compteur à zéro.
+    """
+    debut, fin = cycle_bounds(quarter)
+    total = (fin - debut).days + 1
+    elapsed = (quarter.end_date - debut).days + 1
     return max(min(elapsed / total, 1.0), 0.01)
 
 
@@ -436,7 +481,7 @@ def build_input(
         continuous_duty=continuous_duty_rule(session),
         busy_intervals=busy_intervals(session, quarter),
         locked=locked or {},
-        prior_load=prior_load(session, quarter.year_id, quarter.id),
+        prior_load=prior_load(session, quarter, quarter.id),
         profile=load_rule_profile(session, profile_name),
         seed=seed,
         ruleset_version=RULESET_VERSION,
@@ -518,8 +563,11 @@ def check_assignment(
         period_quotas=quotas_periode,
         prior_period_load={},
         continuous_duty=continuous_duty_rule(session),
-        busy_intervals=[],
-        prior_load=prior_load(session, quarter.year_id, quarter.id),
+        # Lot C, point 5 : une récupération **validée** occupe réellement la
+        # personne. Elle doit donc contraindre aussi la reprise, l'échange et la
+        # correction manuelle, pas seulement la génération initiale.
+        busy_intervals=recovery_intervals(session),
+        prior_load=prior_load(session, quarter, quarter.id),
         profile=load_rule_profile(session),
         year_fraction_elapsed=year_fraction(quarter),
     )
