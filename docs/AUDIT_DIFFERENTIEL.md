@@ -381,3 +381,79 @@ reprise. Le reste de l'espace d'administration est ouvert aux trois fonctions
 sans distinction. À confirmer par le client : faut-il restreindre davantage,
 par exemple la génération ou les quotas, selon la ligne ?
 
+
+---
+
+# Lot de clôture du 04/09/2026 — sous-lots A à E
+
+Base : HEAD `43b4ff6` puis les commits de ce lot. Données exclusivement fictives.
+
+## A — contrôles d'accès
+
+| Exigence | État | Preuve |
+|---|---|---|
+| Statut médical contrôlé à **tous** les points d'entrée médicaux, API et UI | Fait | `deps.profile_medecin` / `deps.profil_medecin_de`, point unique ; `tests/test_lotA_acces.py::test_A1_*` |
+| Contre-épreuve : POST de reprise après révocation | Fait | `test_A1_contre_epreuve_le_post_de_reprise_ne_repond_plus_200` |
+| `GET /api/v1/planning/versions/{id}` fermé aux versions internes | Fait | `visibility_service.version_lisible` ; `test_A2_*` |
+| Listes et détails limités aux acteurs légitimes, 404 uniforme | Fait | `visibility_service` ; `test_A3_*` compare les corps de réponse |
+| Contrat d'anonymat honnête | Fait | `visibility_service.CONTRAT_ANONYMAT` ; `test_A4_*` |
+
+## B — parcours d'échange
+
+| Exigence | État | Preuve |
+|---|---|---|
+| Départ depuis sa propre garde, sans collègue ni contrepartie | Fait | `swap_flow_service.ouvrir` ; `test_B1_*` |
+| Recherche dans le trimestre, verts explicites, éligibilité croisée | Fait | `swap_search_service.rechercher` |
+| Sollicitation simultanée, sans avantage à la rapidité, sans motif | Fait | `test_B3_*` |
+| Classement maximin puis tirage seulement en égalité parfaite | Fait | `swap_flow_service.cloturer` ; `test_lot3_echange.py` sans saut |
+| Double consentement, revalidation atomique, officialisation unique | Fait | `test_B5_*` |
+| Refus, retrait, expiration, annulation, conflit, absence de solution | Fait | `test_B6_*` |
+| Ancien parcours à deux listes retiré de l'interface | Fait | `app/web/templates/echanges.html` ; `test_B1_l_interface_ne_propose_plus_de_choisir_la_garde_souhaitee` |
+| Zéro test sauté | Fait | suite complète |
+
+## C — règles métier
+
+| Exigence | État | Preuve |
+|---|---|---|
+| Bascule reprise → échange réellement lancée | Fait | `handover_service.basculer_vers_un_echange` ; `test_C1_*` |
+| Plafond mensuel comparé à la charge réelle | Fait | `handover_service.charge_du_mois` ; `test_C2_*` |
+| Borne assistant par le vrai moteur | Fait | `test_C3_la_borne_assistant_est_appliquee_par_le_moteur` |
+| Cycle annuel raccordé | Fait | `engine_bridge.cycle_bounds`, `prior_load`, `year_fraction`, `counters_service` ; `test_C4_*` |
+| Récupération validée bloquante et routes protégées | Fait | `engine_bridge.recovery_intervals`, routes `/repos` ; `test_C5_*` |
+| Week-end assistant strictement borné | Fait | `rest_service._assert_week_end_de_neuf_a_neuf`, `ContinuousDutyRuleIn.has_request` ; `test_C6_*` |
+| Objectif mensuel assistant inactif | Fait | `quota_service.OBJECTIF_MENSUEL_ASSISTANT` ; `test_C7_*` |
+
+## D — concurrence applicative
+
+| Exigence | État | Preuve |
+|---|---|---|
+| Schéma migré, modèles et services réels | Prouvé sous PostgreSQL | `test_D0_le_schema_est_bien_celui_des_migrations` |
+| Deux sessions distinctes synchronisées par barrières | Prouvé sous PostgreSQL | `_en_parallele`, `test_D0_les_deux_sessions_sont_reellement_distinctes` |
+| Candidature contre gel | Prouvé sous PostgreSQL | `test_D1` |
+| Double consentement d'échange | Prouvé sous PostgreSQL | `test_D2` |
+| Double tirage réel | Prouvé sous PostgreSQL | `test_D3` |
+| Collision d'outbox sans rollback métier | Prouvé sous PostgreSQL | `test_D4` |
+| Publication concurrente réelle | Prouvé sous PostgreSQL | `test_D5` |
+| Tête d'audit concurrente sans fourche | Prouvé sous PostgreSQL | `test_D6` — **a révélé un défaut réel**, corrigé |
+| Engagement et révélation en deux transactions observables | Prouvé sous PostgreSQL | `handover_service.sceller_engagement` ; `test_D7` |
+
+## E — gouvernance et documents
+
+| Exigence | État | Preuve |
+|---|---|---|
+| Vraies routes d'écriture de quotas, périmètre objet × ligne | Fait | `POST /admin/quotas/cible`, `POST /api/v1/quotas/targets` ; `test_E1_*` |
+| Validation institutionnelle distincte | Fait | `POST /api/v1/quotas/targets/validate` ; `test_E1_la_validation_institutionnelle_est_reservee_au_chef` |
+| Publication, dérogation, journal : permissions séparées | Fait | `test_E2_*` |
+| Documents réconciliés avec le registre canonique | Fait | `OPEN_QUESTIONS.md` (registre canonique), `README.md`, `test_E3_*` |
+| Décompte des tests honnête | Fait | `docs/TESTS.md` |
+
+## Ce qui reste explicitement ouvert
+
+- Les quatre décisions humaines : quota 57/68, plafond mensuel, statut de
+  l'objectif mensuel des assistants, règles des permanences de jour.
+- Les portes de production non validées : MFA/SSO, Argon2id, limitation de débit
+  partagée, contraintes de base supplémentaires, TLS `verify-full`, sauvegarde et
+  restauration, supervision, tenue en charge, audit externe et conformité.
+- La chaîne d'audit **n'est pas** qualifiée d'inviolable : elle détecte une
+  réécriture et refuse une fourche, mais l'ancrage externe reste à faire.
+- **NO_GO maintenu** pour les identités réelles et tout planning officiel.

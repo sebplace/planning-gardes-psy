@@ -21,8 +21,11 @@ from ...models import (
     Draw,
     HandoverRequest,
     HandoverWave,
+    Line,
     ProfessionalProfile,
     Quarter,
+    QuotaCategory,
+    QuotaTarget,
     Scenario,
     ScheduleVersion,
     SwapProposal,
@@ -719,3 +722,99 @@ def verify_audit(
 ):
     ok, problems = audit_service.verify_chain(session)
     return {"chaine_integre": ok, "anomalies": problems}
+
+
+# --------------------------------------------------------------------------- #
+# Écriture des quotas — périmètre objet × ligne (lot E)
+# --------------------------------------------------------------------------- #
+
+
+class QuotaTargetIn(BaseModel):
+    profile_id: int
+    category_code: str
+    ligne: str
+    cible: float
+    commentaire: str | None = None
+
+
+@router.post("/quotas/targets")
+def ecrire_cible_de_quota(
+    payload: QuotaTargetIn,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Saisie d'une cible, refusée hors du périmètre de ligne de la personne."""
+    if not permission_service.may(
+        session, user, permissions.ACTION_QUOTAS_SAISIR, payload.ligne
+    ):
+        raise HTTPException(
+            403,
+            permission_service.refus(
+                permissions.ACTION_QUOTAS_SAISIR, payload.ligne
+            ),
+        )
+    profile = session.get(ProfessionalProfile, payload.profile_id)
+    year = session.execute(select(Year).order_by(Year.id.desc())).scalars().first()
+    category = session.execute(
+        select(QuotaCategory).where(QuotaCategory.code == payload.category_code)
+    ).scalar_one_or_none()
+    if profile is None or year is None or category is None:
+        raise HTTPException(404, "Profil, année ou catégorie inconnue.")
+    cible = quota_service.set_target(
+        session, profile, year, category, Line(payload.ligne), payload.cible, user,
+        comment=payload.commentaire,
+    )
+    session.commit()
+    return {
+        "cible": cible.id,
+        "profil": profile.code,
+        "categorie": category.code,
+        "ligne": payload.ligne,
+        "valeur": cible.target,
+        "valide_institutionnellement": cible.institutionally_validated,
+        "note": (
+            "une cible saisie reste une valeur de simulation tant qu'elle n'est "
+            "pas validée institutionnellement"
+        ),
+    }
+
+
+class QuotaValidateIn(BaseModel):
+    profile_id: int
+    category_code: str
+    ligne: str
+
+
+@router.post("/quotas/targets/validate")
+def valider_cible_de_quota(
+    payload: QuotaValidateIn,
+    user: User = Depends(require_action(permissions.ACTION_QUOTAS_VALIDER)),
+    session: Session = Depends(get_session),
+):
+    """Validation institutionnelle : action distincte, réservée au chef de service."""
+    profile = session.get(ProfessionalProfile, payload.profile_id)
+    year = session.execute(select(Year).order_by(Year.id.desc())).scalars().first()
+    category = session.execute(
+        select(QuotaCategory).where(QuotaCategory.code == payload.category_code)
+    ).scalar_one_or_none()
+    if profile is None or year is None or category is None:
+        raise HTTPException(404, "Profil, année ou catégorie inconnue.")
+    cible = session.execute(
+        select(QuotaTarget).where(
+            QuotaTarget.profile_id == profile.id,
+            QuotaTarget.year_id == year.id,
+            QuotaTarget.category_id == category.id,
+            QuotaTarget.line == Line(payload.ligne),
+        )
+    ).scalar_one_or_none()
+    if cible is None:
+        raise HTTPException(404, "Cible inconnue.")
+    cible.institutionally_validated = True
+    session.flush()
+    audit_service.record(
+        session, "QUOTA_VALIDE_INSTITUTIONNELLEMENT", "quota_target", cible.id,
+        {"profil": profile.code, "categorie": category.code, "ligne": payload.ligne},
+        actor=user,
+    )
+    session.commit()
+    return {"cible": cible.id, "valide_institutionnellement": True}

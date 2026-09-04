@@ -47,6 +47,35 @@
   </div>
   <p><strong>Projection :</strong> {{ resume.projection }}</p>
   {% for note in resume.notes %}<p class="hypothese">{{ note }}</p>{% endfor %}
+
+  <h3>Saisir une cible</h3>
+  <p class="aide">
+    Chaque responsable n'écrit que sur la ligne qu'il supervise ; le chef de
+    service couvre les deux. La validation institutionnelle est une action
+    distincte, et la publication comme la dérogation restent des permissions
+    séparées.
+  </p>
+  <form method="post" action="/admin/quotas/cible">
+    <input type="hidden" name="{{ csrf_field }}" value="{{ csrf_token }}">
+    <input type="hidden" name="profile_id" value="{{ resume.profile_id }}">
+    <label for="cat-{{ resume.profile_id }}">Catégorie</label>
+    <select id="cat-{{ resume.profile_id }}" name="category_code" required>
+      {% for ligne in resume.lines %}
+      <option value="{{ ligne.category_code }}">{{ ligne.category_label }}</option>
+      {% endfor %}
+    </select>
+    <label for="lig-{{ resume.profile_id }}">Ligne</label>
+    <select id="lig-{{ resume.profile_id }}" name="ligne" required>
+      <option value="L1">L1</option>
+      <option value="L2">L2</option>
+    </select>
+    <label for="cib-{{ resume.profile_id }}">Cible</label>
+    <input type="number" id="cib-{{ resume.profile_id }}" name="cible"
+           step="0.5" min="0" required>
+    <input type="text" name="commentaire" maxlength="300" size="30"
+           placeholder="Commentaire (facultatif)">
+    <button type="submit">Enregistrer la cible</button>
+  </form>
 </div>
 {% else %}
 <p class="vide">Aucun quota défini.</p>

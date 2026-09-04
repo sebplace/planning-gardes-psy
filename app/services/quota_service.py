@@ -67,6 +67,7 @@ class QuotaLine:
 class QuotaSummary:
     profile_code: str
     year_label: str
+    profile_id: int | None = None
     lines: list[QuotaLine] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -91,7 +92,9 @@ class QuotaSummary:
 def summary(session: Session, profile: ProfessionalProfile, year: Year) -> QuotaSummary:
     """Cible, réalisé, programmé, restant, écart et projection — pour **une** personne."""
     categories = {c.id: c for c in session.execute(select(QuotaCategory)).scalars()}
-    result = QuotaSummary(profile_code=profile.code, year_label=year.label)
+    result = QuotaSummary(
+        profile_code=profile.code, year_label=year.label, profile_id=profile.id
+    )
     index: dict[tuple[str, str], QuotaLine] = {}
 
     for target in session.execute(

@@ -45,6 +45,11 @@ class QuotaTarget(Base, TimestampMixin):
 
     source: Mapped[str] = mapped_column(String(40), default="MANUEL_ADMIN", nullable=False)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Validation institutionnelle explicite (lot E). Une cible saisie reste une
+    #: valeur de simulation tant que le chef de service ne l'a pas validée.
+    institutionally_validated: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
 
     profile = relationship("ProfessionalProfile")
     category = relationship("QuotaCategory")

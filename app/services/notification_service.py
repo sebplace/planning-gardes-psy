@@ -73,10 +73,6 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "Collecte close — garde du {date}",
         "La liste des candidatures est figée. Le tirage au sort va être exécuté.",
     ),
-    "REPRISE_PASSAGE_ORANGE": (
-        "Aucune candidature verte — garde du {date}",
-        "Aucune candidature verte valide. Une seconde vague est ouverte aux personnes orange.",
-    ),
     "REPRISE_TIRAGE_GAGNANT": (
         "Garde attribuée — {date}",
         "Le tirage au sort vous a désigné·e pour la garde du {date} ({line}). "

@@ -11,6 +11,23 @@ Marqueur utilisé dans l'interface : **« hypothèse de démonstration »**.
 
 ---
 
+## Registre canonique — ce qui est **acquis** et ne se rouvre pas
+
+Ces points sont tranchés. Ils sont rappelés ici pour que la documentation ne
+puisse plus les contredire (lot E du contre-audit du 04/09/2026).
+
+| Point | Règle acquise |
+|---|---|
+| Collecte de reprise en deuxième ligne | **Collecte unique** : verts et orange sont sollicités ensemble. La **priorité au vert** s'applique **au tirage** : s'il existe au moins un volontaire vert valide, le tirage ne porte que sur les **verts valides** ; les orange ne sont tirés qu'en l'absence totale de vert valide. Aucune vague orange successive n'existe plus. |
+| Disponibilité par défaut | Exclue de **toutes** les reprises et de tous les échanges. Elle ne sert qu'à la génération initiale. |
+| Contrat d'anonymat | La sollicitation ne mentionne **ni le nom du demandeur ni son motif**. Le planning publié étant nominatif, l'application ne prétend pas rendre le titulaire indevinable. |
+| Reprise et échange | Deux opérations **distinctes**. « Échange » lance une **recherche** dans le trimestre, ce n'est pas un formulaire d'enregistrement d'un accord trouvé hors application. |
+| Bloc de service continu | Règle ferme **pour les assistants seulement**. Aucun blocage supplémentaire non validé n'est créé pour les seniors. |
+| Cycle de quota | Du **premier lundi d'octobre inclus** au premier lundi d'octobre suivant **exclu**. Rattachement par la **date de service**. |
+| Accès administratif | Ouvert aux trois fonctions (responsable L1, responsable L2, chef de service), avec des permissions **distinctes et traçables**. Publication, dérogation et consultation du journal restent des permissions **explicites**, jamais implicites. |
+
+---
+
 ## Q-01 — Quotas exacts et future formule TIMA
 **Statut** Ouverte · **Impact** fort
 Aucune formule n'est appliquée. Les cibles sont saisies manuellement (M-004). La quotité est
@@ -116,8 +133,10 @@ S06 concentration 30 · S03 rattrapage 25 · S07 pénibilité 20 · S04 multipli
 Une validation tardive pendant le délai de grâce **annule** la conversion ; une prolongation
 ou une réouverture **reprogramme** la tâche sans double événement ni double notification.
 
-## Q-09 — Seuils de proximité, fenêtres et rappels des vagues verte et orange
+## Q-09 — Seuils de proximité, fenêtres et rappels de la collecte de reprise
 **Statut** Ouverte · **Impact** fort
+*Note* : la collecte est **unique**. Le tableau ci-dessous décrit ses paliers,
+pas une succession de vagues.
 *Valeurs de démonstration* (profil `urgence_demo_v1`) :
 
 | Délai avant la garde | Fenêtre | Rappels |
@@ -153,6 +172,18 @@ même classe de durée, mêmes exigences de couverture.
 
 ---
 
+## Q-15 — Statut de l'objectif mensuel des assistants
+**Statut** Ouverte · **Impact** moyen
+« Un vendredi et deux jours de week-end par mois » n'a fait l'objet d'**aucune
+décision institutionnelle explicite**. Le paramètre existe donc, il est lisible
+et modifiable, mais il est **inactif** : ni le moteur, ni les reprises, ni les
+échanges ne le consultent. Un test le prouve en vérifiant qu'aucun fichier du
+paquet `app/engine/` ne le référence.
+*Où* : `quota_service.OBJECTIF_MENSUEL_ASSISTANT`, `actif = False`.
+**Décision humaine attendue** avant tout caractère opposable.
+
+---
+
 ## Points volontairement laissés sans valeur
 
 - Aucun barème, aucune sanction, aucun classement entre médecins.
@@ -160,3 +191,15 @@ même classe de durée, mêmes exigences de couverture.
 - Aucune formule TIMA opérationnelle.
 - Aucun seuil « acceptable » de charge décidé par le logiciel : le module de projections
   compare des hypothèses, il ne recommande pas.
+
+---
+
+## Les quatre vraies décisions humaines restantes
+
+Après les lots A à E, la liste des décisions strictement humaines se réduit à :
+
+1. **quota assistant 57 ou 68** sur la période du 19/10/2026 au 03/10/2027 (Q-01) ;
+2. **plafond mensuel** institutionnel, non chiffré (Q-13) ;
+3. **statut de l'objectif mensuel des assistants** (Q-15) ;
+4. **règles des permanences psychiatriques de jour** (Q-11), module distinct dont
+   les horaires d'une ancienne démonstration ne sont **pas** repris comme règles.

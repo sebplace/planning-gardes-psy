@@ -31,9 +31,12 @@ from ...models import (
     GardeOccurrence,
     HandoverRequest,
     HandoverWave,
+    Line,
     ProfessionalProfile,
     Proposal,
     Quarter,
+    QuotaCategory,
+    QuotaTarget,
     RecoveryProposal,
     Scenario,
     ScenarioResult,
@@ -770,6 +773,98 @@ def admin_quotas(
     year = session.execute(select(Year).order_by(Year.id.desc())).scalars().first()
     resumes = quota_service.admin_overview(session, year) if year else []
     return render(request, "quotas.html", user, "quotas", year=year, resumes=resumes)
+
+
+@router.post("/admin/quotas/cible", response_class=HTMLResponse)
+def admin_quota_ecrire(
+    request: Request,
+    profile_id: int = Form(...),
+    category_code: str = Form(...),
+    ligne: str = Form(...),
+    cible: float = Form(...),
+    commentaire: str = Form(""),
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+):
+    """Écriture d'une cible de quota, **portée par la ligne**.
+
+    Lot E, point 1 du contre-audit du 04/09/2026 : la saisie des quotas
+    n'existait qu'en lecture. Le responsable des gardes de première ligne
+    n'écrit que sur L1, celui de deuxième ligne que sur L2, le chef de service
+    sur les deux. La validation institutionnelle reste une action distincte.
+    """
+    _require(user)
+    if not permission_service.may(
+        session, user, permissions.ACTION_QUOTAS_SAISIR, ligne
+    ):
+        raise HTTPException(
+            403, permission_service.refus(permissions.ACTION_QUOTAS_SAISIR, ligne)
+        )
+    profile = session.get(ProfessionalProfile, profile_id)
+    year = session.execute(select(Year).order_by(Year.id.desc())).scalars().first()
+    category = session.execute(
+        select(QuotaCategory).where(QuotaCategory.code == category_code)
+    ).scalar_one_or_none()
+    if profile is None or year is None or category is None:
+        raise visibility_service.RessourceInvisible()
+    try:
+        quota_service.set_target(
+            session, profile, year, category, Line(ligne), cible, user,
+            comment=commentaire or None,
+        )
+        session.commit()
+        flash(request, "succes",
+              f"Cible enregistrée pour {profile.code} — {category.code} / {ligne}. "
+              "Elle reste une valeur de simulation tant qu'elle n'est pas validée "
+              "institutionnellement.")
+    except ValueError as exc:
+        session.rollback()
+        flash(request, "erreur", str(exc))
+    return RedirectResponse("/admin/quotas", status_code=303)
+
+
+@router.post("/admin/quotas/valider", response_class=HTMLResponse)
+def admin_quota_valider(
+    request: Request,
+    profile_id: int = Form(...),
+    category_code: str = Form(...),
+    ligne: str = Form(...),
+    user: User | None = Depends(optional_user),
+    session: Session = Depends(get_session),
+):
+    """Validation institutionnelle d'une cible : action réservée au chef de service."""
+    _require(user)
+    if not permission_service.may(session, user, permissions.ACTION_QUOTAS_VALIDER):
+        raise HTTPException(
+            403, permission_service.refus(permissions.ACTION_QUOTAS_VALIDER)
+        )
+    profile = session.get(ProfessionalProfile, profile_id)
+    year = session.execute(select(Year).order_by(Year.id.desc())).scalars().first()
+    category = session.execute(
+        select(QuotaCategory).where(QuotaCategory.code == category_code)
+    ).scalar_one_or_none()
+    if profile is None or year is None or category is None:
+        raise visibility_service.RessourceInvisible()
+    cible = session.execute(
+        select(QuotaTarget).where(
+            QuotaTarget.profile_id == profile.id,
+            QuotaTarget.year_id == year.id,
+            QuotaTarget.category_id == category.id,
+            QuotaTarget.line == Line(ligne),
+        )
+    ).scalar_one_or_none()
+    if cible is None:
+        raise visibility_service.RessourceInvisible()
+    cible.institutionally_validated = True
+    session.flush()
+    audit_service.record(
+        session, "QUOTA_VALIDE_INSTITUTIONNELLEMENT", "quota_target", cible.id,
+        {"profil": profile.code, "categorie": category.code, "ligne": ligne},
+        actor=user,
+    )
+    session.commit()
+    flash(request, "succes", "Cible validée institutionnellement.")
+    return RedirectResponse("/admin/quotas", status_code=303)
 
 
 # --------------------------------------------------------------------------- #

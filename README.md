@@ -126,10 +126,12 @@ docker compose exec app python scripts/seed_demo.py
 5. **Génération et publication** — trois variantes comparées avec leur score détaillé,
    une tentative de correction manuelle sur une date rouge **refusée**, puis
    validation humaine et publication.
-6. **Reprises** — une reprise verte avec plusieurs volontaires et tirage auditable,
-   une reprise orange après échec de la vague verte, une reprise échouée avec escalade.
-7. **Échanges** — un échange bilatéral officialisé entre deux gardes équivalentes,
-   et un échange refusé entre gardes de nature différente.
+6. **Reprises** — une collecte **unique** avec plusieurs volontaires et tirage
+   auditable, une reprise sans volontaire qui bascule vers une recherche
+   d'échange, une reprise échouée avec escalade.
+7. **Échanges** — le parcours nominal part d'une seule garde à céder, sollicite
+   tous les partenaires possibles, classe les accords et officialise ; un
+   échange entre gardes de nature différente est refusé.
 
 En fin de parcours, l'intégrité de la chaîne d'audit est vérifiée.
 
@@ -167,24 +169,63 @@ Détails complets : **`ARCHITECTURE.md`**.
 
 ---
 
-## Le tirage au sort d'une reprise
+## Reprise et échange : deux opérations distinctes
+
+### La reprise, et son tirage au sort
 
 C'est la seule exception à la validation humaine finale, et elle est explicitement
 bornée au choix entre plusieurs volontaires **déjà éligibles**.
 
-1. Sollicitation **simultanée** et **anonyme** de toutes les personnes éligibles.
-2. Collecte pendant une fenêtre **adaptée à la proximité de la garde**.
+1. Sollicitation **simultanée** de toutes les personnes éligibles. Une seule
+   **collecte unique** : en deuxième ligne, verts et orange sont sollicités
+   ensemble, et la **priorité au vert** s'applique au moment du tirage, jamais
+   par une vague orange successive.
+2. La sollicitation ne mentionne **ni le nom du demandeur ni son motif**. Le
+   planning publié étant nominatif, l'application ne prétend pas rendre le
+   titulaire indevinable : elle garantit que le message n'expose ni identité ni
+   motif, et que les commentaires restent réservés au demandeur et aux
+   responsables compétents.
+3. Collecte pendant une fenêtre **adaptée à la proximité de la garde**.
    *Répondre plus vite ne procure aucun avantage.*
-3. **Gel** de la liste. Le serveur tire alors une graine et n'enregistre que son
-   empreinte : la graine est prouvablement antérieure au calcul du résultat.
-4. **Revérification** de chaque candidature (un rouge exclut immédiatement).
-5. **Tirage** : `index = HMAC-SHA256(graine, empreinte_liste) mod n`.
-   La graine est révélée : n'importe qui peut recalculer.
-6. **Une seule tentative officielle** (contrainte d'unicité + transition gardée).
-7. Résultat **immédiatement officiel**. Planning, quotas, historique et clôture sont
+4. **Gel** de la liste et **engagement** sur la graine, commis dans une
+   transaction distincte de la révélation : l'engagement est donc prouvablement
+   antérieur au résultat.
+5. **Revérification** de chaque candidature (un rouge exclut immédiatement ;
+   une disponibilité par défaut non confirmée est exclue de toutes les reprises).
+6. **Tirage** parmi les **verts valides** s'il en existe, sinon parmi les orange :
+   `index = HMAC-SHA256(graine, empreinte_liste) mod n`. La graine est révélée :
+   n'importe qui peut recalculer.
+7. **Une seule tentative officielle** (contrainte d'unicité + transition gardée).
+8. Résultat **immédiatement officiel**. Planning, quotas, historique et clôture sont
    mis à jour **dans une seule transaction**.
+9. Si aucun volontaire ne peut absorber la garde sans dépasser sa cible ou un
+   plafond, une **recherche d'échange équivalent** est réellement lancée. Sans
+   échange non plus, le titulaire publié reste responsable et une alerte
+   explicite part vers les responsables.
 
 L'écran `/reprises/{id}` affiche l'intégralité de cette preuve.
+
+### L'échange, à partir de sa propre garde
+
+Le parcours nominal ne demande **ni collègue ni garde de contrepartie** :
+
+1. depuis sa propre garde future, la personne demande un échange, sans motif ;
+2. l'application cherche dans le **même trimestre** les collègues explicitement
+   verts à cette date qui détiennent une garde de même nature reprenable par le
+   demandeur, l'éligibilité croisée étant vérifiée séparément dans les deux sens ;
+3. tous les partenaires possibles sont sollicités **en même temps** ;
+4. à la clôture, seules les réponses positives sont classées par **maximin** sur
+   les quatre intervalles avant et après les nouvelles gardes, trimestres
+   adjacents inclus ; un tirage auditable ne départage qu'en cas d'**égalité
+   parfaite** ;
+5. les deux consentements étant explicites, les deux affectations sont
+   revalidées **atomiquement** et l'échange est officialisé exactement une fois ;
+6. refus, retrait, expiration, annulation, conflit concurrent et absence de
+   solution sont des états modélisés. **Aucun responsable n'intervient dans un
+   parcours conforme.**
+
+L'écran `/echanges/{id}` affiche le classement, les exclusions et la preuve
+éventuelle de tirage.
 
 ---
 
@@ -194,8 +235,10 @@ L'écran `/reprises/{id}` affiche l'intégralité de cette preuve.
 python -m pytest tests -q
 ```
 
-**60 tests, couvrant les 52 exigences de la section 22 du cahier des charges.**
-La correspondance exigence → test est dans **`docs/TESTS.md`**.
+Le décompte exact, la répartition par lot et la distinction entre tests
+collectés, réussis et sautés sont dans **`docs/TESTS.md`**. La campagne de
+concurrence PostgreSQL exige un serveur joignable : sans lui, les tests
+concernés sont sautés avec un motif explicite et ne sont **jamais** simulés.
 
 ---
 
@@ -208,10 +251,21 @@ La correspondance exigence → test est dans **`docs/TESTS.md`**.
 - aucun écran ne la présente comme une règle validée.
 
 Points principaux : quotas exacts et formule TIMA, règles liées à l'âge (**aucun seuil
-n'est codé**), horaires exacts, rattachement des veilles de fériés, exigence vert ou
+n'est codé**), rattachement des veilles de fériés, exigence vert ou
 vert + orange pour les paires, repos minimal, pondération des critères souples,
 délai de grâce, seuils d'urgence des vagues, préférences par ligne, module de jour,
 catalogue des classes d'échange.
+
+### Les quatre vraies décisions humaines encore attendues
+
+1. **quota assistant 57 ou 68** sur la période du 19/10/2026 au 03/10/2027 ;
+2. **plafond mensuel** institutionnel, non chiffré à ce jour ;
+3. **statut de l'objectif mensuel des assistants** (« un vendredi et deux jours
+   de week-end par mois ») : le paramètre existe, il est **inactif** et n'est
+   consulté par aucune contrainte ferme ;
+4. **règles des permanences psychiatriques de jour**, module distinct, non
+   construit et dont les horaires d'une ancienne démonstration ne sont **pas**
+   repris comme règles.
 
 Les arbitrages **déjà tranchés** sont dans `DECISIONS.md` (M-001 à M-008).
 

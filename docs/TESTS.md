@@ -122,3 +122,84 @@ supprimés :
 
 `test_engine_hard.py::test_17_regle_de_repos_ferme_jamais_violee` ne verifie plus le
 maximum de service continu que sur les assistants.
+
+---
+
+## Lot de clôture du 04/09/2026 — sous-lots A à E
+
+### Décompte honnête
+
+La suite compte **485 tests collectés**. Le décompte exact, sa répartition et le
+code de sortie sont produits par la commande elle-même : ils ne sont jamais
+arrondis ni reformulés à la hausse dans ce document. Un test **sauté** est
+compté comme sauté, jamais comme réussi.
+
+Deux modules exigent un serveur PostgreSQL joignable :
+
+| Module | Variable d'environnement | Sans elle |
+|---|---|---|
+| `tests/test_lot5_concurrence_pg.py` | `GARDES_TEST_PG_URL` | 10 tests sautés, motif explicite |
+| `tests/test_lotD_concurrence_applicative.py` | `GARDES_TEST_PG_URL_APP` | 9 tests sautés, motif explicite |
+
+Ces tests ne sont **jamais** simulés : sans serveur, ils sont sautés avec un
+motif lisible, et le rapport de livraison le dit.
+
+### Répartition par sous-lot
+
+| Sous-lot | Fichier | Tests |
+|---|---|---|
+| A — contrôles d'accès | `tests/test_lotA_acces.py` | 11 |
+| B — parcours d'échange | `tests/test_lotB_echange.py` | 15 |
+| C — règles métier exécutées | `tests/test_lotC_metier.py` | 20 |
+| D — concurrence applicative PostgreSQL | `tests/test_lotD_concurrence_applicative.py` | 9 |
+| E — gouvernance et documents | `tests/test_lotE_gouvernance.py` | 24 |
+
+### Ce que chaque sous-lot prouve
+
+**A — contrôles d'accès.** Le statut médical est contrôlé au même endroit pour
+tous les points d'entrée métier : la contre-épreuve du POST de reprise après
+révocation répond désormais `403` et non plus `200`. Un brouillon de planning est
+fermé au médecin ordinaire. Reprises, vagues, tirages et échanges ne sont
+lisibles que par leurs acteurs légitimes, avec une réponse `404` **identique** à
+celle d'une ressource inexistante : deux tests comparent les corps de réponse.
+Le contrat d'anonymat est vérifié sur les messages réellement émis.
+
+**B — parcours d'échange.** Le service de recherche est réellement appelé, prouvé
+par le journal. L'interface ne propose plus de choisir la « garde souhaitée ».
+Les partenaires sont sollicités au même instant. Le double consentement
+officialise exactement une fois, et une seconde clôture est refusée. Refus,
+retrait, expiration, annulation et absence de solution ont chacun leur test.
+Les deux tests auparavant sautés du lot 3 — ordre maximin du résultat intégré et
+tirage auditable en égalité parfaite — passent désormais sur un jeu de données
+déterministe, **sans aucun saut**.
+
+**C — règles métier.** Bascule reprise → échange réellement lancée ; plafond
+mensuel comparé à la charge réelle du mois ; borne assistant du 03/10/2027
+prouvée par le vrai moteur d'affectation ; cycle du premier lundi d'octobre
+raccordé aux charges antérieures, à l'avancement et aux compteurs, avec le
+passage du 31 décembre ; récupération validée bloquante pour la reprise et
+l'échange ; opt-in week-end strictement borné ; objectif mensuel des assistants
+inactif, prouvé par l'absence de toute référence dans `app/engine/`.
+
+**D — concurrence applicative.** Schéma migré, modèles et services réels, deux
+sessions distinctes synchronisées par barrières. Un test vérifie qu'aucune table
+`bac_*` n'intervient et que les deux backends PostgreSQL sont différents.
+L'engagement du tirage et sa révélation sont séparés en deux transactions
+**observables** : après la première, une autre session voit l'empreinte et
+l'engagement, mais aucun tirage.
+
+**E — gouvernance et documents.** Les vraies routes d'écriture de quotas
+existent et respectent le périmètre objet × ligne, dans l'interface et dans
+l'API. La validation institutionnelle est réservée au chef de service.
+Publication, dérogation et consultation du journal restent des permissions
+explicites. Trois tests vérifient que la documentation ne contredit plus le
+registre canonique.
+
+### Anomalie réelle trouvée par les tests
+
+Le test `D6` a révélé un défaut du programme, pas seulement du test : deux
+écritures d'audit réellement concurrentes forkaient la chaîne **en silence**.
+Correction apportée : verrou consultatif de transaction sous PostgreSQL
+(prévention) et index unique sur `prev_hash` (détection, migration
+`b2c3d4e5f6a7`). La chaîne n'est toujours **pas** qualifiée d'inviolable : un
+ancrage externe reste à mettre en place avant toute donnée réelle.
