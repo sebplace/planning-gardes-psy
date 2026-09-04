@@ -111,10 +111,77 @@ def open_campaign(session: Session, campaign: Campaign, admin: User | None = Non
 # --------------------------------------------------------------------------- #
 
 
+#: États de campagne dans lesquels une saisie est encore possible.
+#: ``RESOLUTION_NON_REPONDANTS`` n'y figure que **pendant le délai de grâce**,
+#: conformément au mécanisme de non-réponse (une validation tardive pendant ce
+#: délai annule la conversion). Le contrôle temporel est fait dans ``_editable``.
+CAMPAGNE_OUVERTE_A_LA_SAISIE = (
+    CampaignState.OUVERTE,
+    CampaignState.RESOLUTION_NON_REPONDANTS,
+)
+
+#: États de soumission dans lesquels la personne peut encore modifier ses couleurs.
+#: VALIDEE en est **exclue** : la modification exige une réouverture tracée.
+SOUMISSION_EDITABLE = (SubmissionState.NON_COMMENCEE, SubmissionState.BROUILLON)
+
+
 def _editable(submission: Submission) -> None:
+    """Trois verrous cumulés avant toute écriture sur une soumission.
+
+    Contre-audit du 04/09/2026 : seul l'état VERROUILLEE était contrôlé, donc une
+    réponse VALIDEE restait modifiable, et l'état de la campagne n'était jamais
+    vérifié.
+    """
+    campagne = submission.campaign
+    if campagne is not None:
+        if campagne.state not in CAMPAGNE_OUVERTE_A_LA_SAISIE:
+            raise CampaignError(
+                f"Campagne en état {campagne.state.value} : la saisie est fermée. "
+                "Une prolongation ou une réouverture tracée est nécessaire."
+            )
+        if campagne.state is CampaignState.RESOLUTION_NON_REPONDANTS:
+            # Fenêtre étroite : seule une validation tardive pendant le délai de
+            # grâce reste possible, et elle annule la conversion.
+            limite = campagne.grace_deadline
+            if limite is not None and Clock.now() > limite:
+                raise CampaignError(
+                    "Délai de grâce écoulé : la saisie est fermée. Une réouverture "
+                    "tracée est nécessaire."
+                )
+    if submission.state is SubmissionState.VALIDEE:
+        raise CampaignError(
+            "Réponse déjà validée. Elle ne peut plus être modifiée directement : "
+            "un administrateur doit la rouvrir, et la réouverture est tracée."
+        )
     if submission.state is SubmissionState.VERROUILLEE:
         raise CampaignError(
             "Réponse verrouillée. Un administrateur doit la rouvrir, et la réouverture est tracée."
+        )
+    if submission.state not in SOUMISSION_EDITABLE:
+        raise CampaignError(
+            f"Réponse en état {submission.state.value} : modification refusée."
+        )
+
+
+def _occurrence_dans_le_perimetre(
+    submission: Submission, occurrence: GardeOccurrence
+) -> None:
+    """Refuse une occurrence qui n'appartient pas au trimestre de la soumission.
+
+    Sans ce contrôle, une requête forgée pouvait injecter une couleur sur une
+    date d'un autre trimestre, hors de tout périmètre de campagne.
+    """
+    campagne = submission.campaign
+    if campagne is None:
+        raise CampaignError("Soumission détachée de toute campagne.")
+    if occurrence.quarter_id != campagne.quarter_id:
+        raise CampaignError(
+            f"L'occurrence du {occurrence.local_date.isoformat()} n'appartient pas "
+            "au trimestre de cette campagne : saisie refusée."
+        )
+    if campagne.module is not None and occurrence.garde_type.module != campagne.module:
+        raise CampaignError(
+            "L'occurrence relève d'un autre module que celui de la campagne."
         )
 
 
@@ -128,6 +195,7 @@ def set_availability(
 ) -> Availability:
     """Enregistre une couleur déclarée par la personne elle-même."""
     _editable(submission)
+    _occurrence_dans_le_perimetre(submission, occurrence)
     if color is Color.DISPO_DEFAUT:
         raise CampaignError(
             "La disponibilité par défaut ne peut pas être saisie : elle résulte "

@@ -125,6 +125,9 @@ class WaveState(str, Enum):
 
 class CandidacyState(str, Enum):
     DEPOSEE = "DEPOSEE"
+    #: Retrait explicite par la personne, ou refus postérieur à une candidature
+    #: favorable. Une candidature retirée n'est **jamais** tirable.
+    RETIREE = "RETIREE"
     VALIDE = "VALIDE"
     EXCLUE = "EXCLUE"
     RETENUE = "RETENUE"

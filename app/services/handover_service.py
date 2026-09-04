@@ -375,18 +375,40 @@ def send_due_reminders(session: Session, wave: HandoverWave) -> int:
 # --------------------------------------------------------------------------- #
 
 
+def _assert_collecte_ouverte(session: Session, wave: HandoverWave, action: str) -> None:
+    """Refuse et **trace** toute tentative de modification après gel ou échéance.
+
+    Contre-audit du 04/09/2026 : un refus déposé après le gel était silencieux, et
+    un refus postérieur à une candidature favorable laissait la candidature
+    tirable.
+    """
+    session.refresh(wave)
+    motif = None
+    if wave.state is not WaveState.OUVERTE:
+        motif = f"collecte close (état {wave.state.value})"
+    elif Clock.now() > wave.closes_at:
+        motif = "fenêtre de réponse expirée"
+    if motif is None:
+        return
+    audit_service.record(
+        session,
+        "REPONSE_TARDIVE_REFUSEE",
+        "handover_wave",
+        wave.id,
+        {"action": action, "motif": motif, "cloture": wave.closes_at.isoformat()},
+        actor_label="SYSTEME",
+    )
+    raise HandoverError(
+        f"Modification refusée : {motif}. La liste des candidatures est figée."
+    )
+
+
 def submit_candidacy(
     session: Session, wave: HandoverWave, profile: ProfessionalProfile
 ) -> Candidacy:
     """Dépôt d'une candidature. **Ce n'est pas une attribution.**"""
-    session.refresh(wave)
-    if wave.state is not WaveState.OUVERTE:
-        raise HandoverError(
-            "La collecte est close : la liste des candidatures est déjà figée."
-        )
+    _assert_collecte_ouverte(session, wave, "candidature")
     now = Clock.now()
-    if now > wave.closes_at:
-        raise HandoverError("Candidature tardive : la fenêtre de réponse est expirée.")
     occurrence = _occurrence_of(wave.request)
     if occurrence.start_at <= now:
         raise HandoverError("La garde a déjà commencé.")
@@ -400,6 +422,19 @@ def submit_candidacy(
     ).scalar_one_or_none()
     if solicitation is None:
         raise HandoverError("Vous n'avez pas été sollicité·e pour cette vague.")
+
+    existante = session.execute(
+        select(Candidacy).where(
+            Candidacy.wave_id == wave.id, Candidacy.profile_id == profile.id
+        )
+    ).scalar_one_or_none()
+    if existante is not None:
+        if existante.state is CandidacyState.RETIREE:
+            raise HandoverError(
+                "Candidature déjà retirée : elle ne peut pas être redéposée sur "
+                "cette collecte."
+            )
+        raise HandoverError("Candidature déjà enregistrée.")
 
     candidacy = Candidacy(wave_id=wave.id, profile_id=profile.id, state=CandidacyState.DEPOSEE)
     session.add(candidacy)
@@ -421,6 +456,8 @@ def submit_candidacy(
 
 
 def decline(session: Session, wave: HandoverWave, profile: ProfessionalProfile) -> None:
+    """Refus ou retrait. Rend la candidature éventuelle **définitivement non tirable**."""
+    _assert_collecte_ouverte(session, wave, "refus")
     solicitation = session.execute(
         select(WaveSolicitation).where(
             WaveSolicitation.wave_id == wave.id, WaveSolicitation.profile_id == profile.id
@@ -428,9 +465,41 @@ def decline(session: Session, wave: HandoverWave, profile: ProfessionalProfile) 
     ).scalar_one_or_none()
     if solicitation is None:
         return
+
+    # Un refus postérieur à une candidature favorable la retire réellement.
+    candidature = session.execute(
+        select(Candidacy).where(
+            Candidacy.wave_id == wave.id,
+            Candidacy.profile_id == profile.id,
+            Candidacy.state == CandidacyState.DEPOSEE,
+        )
+    ).scalar_one_or_none()
+    if candidature is not None:
+        candidature.state = CandidacyState.RETIREE
+        candidature.exclusion_reason = (
+            "Retrait explicite par la personne après une réponse favorable : "
+            "candidature non tirable."
+        )
+        session.flush()
+        audit_service.record(
+            session,
+            "CANDIDATURE_RETIREE",
+            "candidacy",
+            candidature.id,
+            {"vague": wave.id, "profil": profile.code},
+            actor=profile.user,
+        )
+
     solicitation.responded_at = Clock.now()
     solicitation.response = "REFUS"
     session.flush()
+
+
+def withdraw_candidacy(
+    session: Session, wave: HandoverWave, profile: ProfessionalProfile
+) -> None:
+    """Retrait explicite. Synonyme opérationnel du refus, tracé de la même façon."""
+    decline(session, wave, profile)
 
 
 def all_responded(session: Session, wave: HandoverWave) -> bool:
