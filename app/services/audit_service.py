@@ -2,6 +2,21 @@
 
 ``hash = sha256(prev_hash || charge utile canonique)``. Toute réécriture a
 posteriori casse la chaîne et devient détectable (DECISIONS.md D-006).
+
+Lot D du contre-audit du 04/09/2026 : deux écritures **réellement concurrentes**
+lisaient la même tête de chaîne et produisaient une fourche silencieuse. Deux
+protections cumulées :
+
+1. **prévention** — la tête de chaîne est sérialisée par un verrou consultatif
+   de transaction sous PostgreSQL ; la seconde écriture attend la validation de
+   la première puis relit la tête réelle ;
+2. **détection** — un index unique sur ``prev_hash`` interdit à deux événements
+   de partager le même prédécesseur. Même si le verrou était contourné, la
+   fourche serait refusée par la base, jamais commise en silence.
+
+La chaîne n'est pas qualifiée d'inviolable pour autant : elle détecte une
+réécriture et refuse une fourche, mais un ancrage externe reste à mettre en
+place avant toute donnée réelle.
 """
 
 from __future__ import annotations
@@ -10,15 +25,32 @@ import hashlib
 import json
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..models import AuditEvent, User
 from .clock import Clock
 
+#: Clé du verrou consultatif de transaction protégeant la tête de chaîne.
+VERROU_TETE_AUDIT = 748213
+
 
 def _canonical(payload: dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _serialiser_la_tete(session: Session) -> None:
+    """Sérialise l'accès à la tête de chaîne.
+
+    Sous PostgreSQL, un verrou consultatif de transaction fait attendre la
+    seconde écriture jusqu'à la validation de la première : elle lit alors la
+    tête réelle et chaîne correctement. Sous SQLite, les écritures sont déjà
+    sérialisées par le verrou de base.
+    """
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(:cle)"), {"cle": VERROU_TETE_AUDIT}
+        )
 
 
 def last_hash(session: Session) -> str:
@@ -40,6 +72,7 @@ def record(
     """Ajoute un événement au journal. Ne commite pas : l'appelant maîtrise sa transaction."""
     payload = payload or {}
     at = Clock.now()
+    _serialiser_la_tete(session)
     prev = last_hash(session)
     body = _canonical(
         {

@@ -221,6 +221,16 @@ def _durcissement_http(monkeypatch):
 @pytest.fixture()
 def world(session) -> World:
     """Univers fictif : 4 seniors, 2 assistants, 1 administrateur, 21 jours de gardes."""
+    return build_world(session)
+
+
+def build_world(session) -> World:
+    """Construit l'univers fictif sur **n'importe quelle** session.
+
+    Extrait de la fixture pour que la campagne de concurrence du lot D puisse
+    monter le même univers sur une base PostgreSQL migrée, avec les vrais
+    modèles et les vrais services, au lieu de tables simplifiées.
+    """
     w = World(session)
     Clock.freeze(CAMPAIGN_OPEN)
 

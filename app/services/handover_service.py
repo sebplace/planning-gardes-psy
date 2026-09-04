@@ -20,7 +20,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import secrets
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import select, update
@@ -636,11 +635,31 @@ def _sha(values: list[int]) -> str:
     return hashlib.sha256(",".join(str(v) for v in sorted(values)).encode()).hexdigest()
 
 
-def close_and_draw(session: Session, wave: HandoverWave) -> Draw | None:
-    """Gel de la liste, revérification, puis tirage. Une seule tentative officielle.
+def _graine_scellee(list_hash: str, wave_id: int) -> str:
+    """Graine dérivée du secret serveur, de la vague et de la liste **figée**.
 
-    Retourne ``None`` si aucune candidature valide ne subsiste (la vague suivante ou
-    l'escalade est alors décidée par ``advance``).
+    Lot D du contre-audit du 04/09/2026 : l'engagement doit être commis dans une
+    transaction, la révélation dans une autre. Une graine aléatoire non
+    persistée l'interdirait. La dérivation résout le problème sans exposer la
+    graine avant l'heure : elle n'est reconstituée qu'au moment du tirage, et
+    toute modification de la liste figée change la graine, donc invalide
+    l'engagement — la fraude est détectable.
+    """
+    from ..config import settings
+
+    return hmac.new(
+        settings.secret_key.encode(),
+        f"{wave_id}:{list_hash}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def sceller_engagement(session: Session, wave: HandoverWave) -> dict:
+    """Transaction 1 : gel de la liste et engagement, **sans aucun calcul**.
+
+    À l'issue de cet appel, l'empreinte de la liste et l'engagement sur la
+    graine sont enregistrés. Le résultat du tirage n'existe pas encore et n'est
+    pas calculable depuis les données publiées.
     """
     request = wave.request
     if not _guard(session, HandoverWave, wave.id, "state", WaveState.OUVERTE, WaveState.FIGEE):
@@ -665,7 +684,6 @@ def close_and_draw(session: Session, wave: HandoverWave) -> Draw | None:
         )
     session.refresh(request)
 
-    # 1. Gel de la liste des candidatures reçues.
     frozen = list(
         session.execute(
             select(Candidacy)
@@ -675,9 +693,7 @@ def close_and_draw(session: Session, wave: HandoverWave) -> Draw | None:
     )
     frozen_ids = [c.id for c in frozen]
     list_hash = _sha(frozen_ids)
-
-    # 2. Engagement sur la graine : l'empreinte est enregistrée **avant** tout calcul.
-    server_seed = secrets.token_hex(32)
+    server_seed = _graine_scellee(list_hash, wave.id)
     seed_commitment = hashlib.sha256(server_seed.encode()).hexdigest()
     wave.frozen_at = Clock.now()
     wave.list_hash = list_hash
@@ -687,7 +703,11 @@ def close_and_draw(session: Session, wave: HandoverWave) -> Draw | None:
         session, "LISTE_FIGEE", "handover_wave", wave.id,
         {"candidatures": frozen_ids, "empreinte_liste": list_hash,
          "engagement_graine": seed_commitment,
-         "note": "la graine est tirée au gel ; seule son empreinte est publiée à ce stade"},
+         "note": (
+             "engagement scellé et commis avant tout calcul ; la graine n'est "
+             "reconstituée qu'à la révélation, à partir du secret serveur et de "
+             "la liste figée"
+         )},
         actor_label="SYSTEME",
     )
     for profile_id in {c.profile_id for c in frozen}:
@@ -698,6 +718,59 @@ def close_and_draw(session: Session, wave: HandoverWave) -> Draw | None:
             session.get(ProfessionalProfile, profile_id),
             _context(session, request, wave),
             anonymised=True,
+        )
+    return {
+        "empreinte_liste": list_hash,
+        "engagement_graine": seed_commitment,
+        "candidatures_figees": frozen_ids,
+    }
+
+
+def close_and_draw(session: Session, wave: HandoverWave) -> Draw | None:
+    """Révélation : revérification puis tirage. Une seule tentative officielle.
+
+    Si l'engagement n'a pas encore été scellé, il l'est ici — le comportement
+    d'origine reste donc valable en un seul appel. Quand il l'a été dans une
+    transaction précédente, on repart de l'engagement commis.
+
+    Retourne ``None`` si aucune candidature valide ne subsiste (la vague suivante ou
+    l'escalade est alors décidée par ``advance``).
+    """
+    request = wave.request
+    session.refresh(wave)
+    if wave.state is WaveState.OUVERTE:
+        sceller_engagement(session, wave)
+        session.refresh(wave)
+        session.refresh(request)
+    elif wave.state is not WaveState.FIGEE or wave.seed_commitment is None:
+        raise HandoverError(
+            f"La collecte n'est pas dans un état permettant le tirage "
+            f"(état {wave.state.value})."
+        )
+
+    frozen = list(
+        session.execute(
+            select(Candidacy)
+            .where(
+                Candidacy.wave_id == wave.id,
+                Candidacy.state.in_([CandidacyState.DEPOSEE, CandidacyState.VALIDE]),
+            )
+            .order_by(Candidacy.id)
+        ).scalars()
+    )
+    frozen_ids = [c.id for c in frozen]
+    list_hash = wave.list_hash
+    seed_commitment = wave.seed_commitment
+    server_seed = _graine_scellee(list_hash, wave.id)
+    if hashlib.sha256(server_seed.encode()).hexdigest() != seed_commitment:
+        raise HandoverError(
+            "L'engagement scellé ne correspond plus à la liste figée : le tirage "
+            "est refusé et l'anomalie doit être auditée."
+        )
+    if _sha(frozen_ids) != list_hash:
+        raise HandoverError(
+            "La liste des candidatures ne correspond plus à l'empreinte engagée "
+            "au gel : le tirage est refusé et l'anomalie doit être auditée."
         )
 
     # 3. Revérification de chaque candidature figée.
